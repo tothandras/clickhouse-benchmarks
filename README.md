@@ -129,6 +129,31 @@ concurrent load — where the I/O reduction binds.
 - **Materialized views / projections on the raw table** — per-insert
   fan-out across thousands of meters collapses ingest.
 
+### Query-time settings we tried
+
+A quick A/B sweep on the `data-as-json` 10M table (each setting vs default,
+10 iterations, cache-warm, OS CPU from `system.query_log`):
+
+| Setting | Effect on CPU | Verdict |
+| --- | --- | --- |
+| `max_threads=4` (default `auto(N)`) | **−5% to −33%**, ~50% less memory, same p50 | Real win, but host-dependent |
+| `optimize_aggregation_in_order=1` | +7% to +19% | Hurts |
+| `allow_aggregate_partitions_independently=1` | ±5% | Neutral |
+| `allow_prefetched_read_pool_for_local_filesystem=1` | ±5% | Neutral |
+| Disabling JIT / `optimize_read_in_order` | Slight regression | Defaults are right |
+| Doubling/halving `max_block_size` | ±2% | Neutral |
+
+`optimize_move_to_prewhere=1` and `allow_reorder_prewhere_conditions=1` are
+already on by default in CH ≥24.x, so the explicit `SETTINGS` clauses on
+two of the queries are redundant (kept for documentation).
+
+**`max_threads` is the only real lever, and it's a host-property knob, not a
+query property.** The default `auto(N)` over-provisions threads for
+moderate-row meter queries on this 16-CPU host; for any specific deployment
+the sweet spot will be different. Set it in your client config or per query,
+not in the shipped schema. None of the other settings explored were worth
+baking into the queries; the defaults are the right defaults.
+
 ### The per-meter overlay (a different question)
 
 The OpenMeter team's
