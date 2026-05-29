@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(om_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(om_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  sum(ifNotFinite(toFloat64OrNull(toString(om_events.data.tokens.:String)), NULL)) AS value,
+  sum(toDecimal128OrNull(toString(om_events.data.tokens), 19)) AS value,
   toString(om_events.data.model.:String) AS model,
   toString(om_events.data.provider.:String) AS provider
 FROM om_events

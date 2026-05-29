@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(om_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(om_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  sum(ifNotFinite(toFloat64OrNull(JSON_VALUE(om_events.data, '$.value')), NULL)) AS value,
+  sum(toDecimal128OrNull(JSON_VALUE(om_events.data, '$.value'), 19)) AS value,
   om_events.subject AS subject,
   JSON_VALUE(om_events.data, '$.group1') AS group1
 FROM om_events

@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(om_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(om_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  sum(ifNotFinite(toFloat64OrNull(JSON_VALUE(om_events.data, '$.value')), NULL)) AS value,
+  sum(toDecimal128OrNull(JSON_VALUE(om_events.data, '$.value'), 19)) AS value,
   om_events.subject AS subject
 FROM om_events
 WHERE om_events.namespace = {namespace:String}

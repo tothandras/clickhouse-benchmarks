@@ -54,7 +54,8 @@ Scenarios that need data populated can either:
    (15%, `tokens`/`model`/`provider`), `workload` (7%, `duration_seconds`/
    `region`), and `agent_run` (3%, `agent_name`). Numeric payload fields are
    emitted as JSON strings (e.g. `"tokens":"1"`) to match real producers, so
-   queries must extract them with `toFloat64OrNull(JSON_VALUE(...))`. Selection
+   queries must extract them with `toDecimal128OrNull(...)` over the path's
+   stringified form (any JSON-stored type, for exact billing). Selection
    is seedable, so reruns produce byte-identical data across table variants.
    Per-type queries (`llm_tokens_by_model`, `kong_status_by_route`,
    `workload_seconds_by_region`, `agent_runs_by_name`) aggregate each type's

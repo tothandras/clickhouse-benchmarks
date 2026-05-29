@@ -54,9 +54,10 @@ openspec archive <change>     # land it after implementation
 **The optimum, for the OpenMeter use case as it works today:** keep the
 upstream `om_events` columns and ORDER BY, change `data String` →
 `data JSON CODEC(ZSTD(3))`, and add a `bloom_filter` skip index on `id` for
-the lookup-by-id path. Queries read each meter's path via native-JSON typed
-subcolumns (`data.<valueProperty>`), use `uniqExact` for `UNIQUE_COUNT`, and
-`toDecimal128OrNull(...,19)` for exact-arithmetic meters.
+the lookup-by-id path. Numeric meter queries read each meter's path through
+the *untyped* JSON root and convert via `toDecimal128OrNull(toString(data.<path>), 19)`
+(string-round-trip → decimal, never `.:Float64`; see "The correctness fix"
+below), `uniqExact` for `UNIQUE_COUNT`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS om_events (
@@ -77,31 +78,63 @@ PARTITION BY toYYYYMM(time)
 ORDER BY (namespace, type, subject, toStartOfHour(time));
 ```
 
+### The correctness fix (the headline of this run)
+
+A meter's `valueProperty` can be stored in `data` as **any** JSON-storable
+type: a JSON number (`Float64`), a JSON string (`"123"` — common from
+producers that JSON-stringify everything), or a JSON integer (bigint
+counters that don't fit in `Float64`). The earlier queries used
+`toString(om_events.data.value.:Float64)`, which **silently returned NULL**
+for every meter whose path wasn't stored as `Float64` — most of them, in
+our seeded data. A "billing total" that quietly reads zero is the worst
+kind of bug.
+
+The fix is to access the JSON path **untyped** and let the conversion
+handle any stored type:
+
+```sql
+-- Numeric agg (sum / avg / min / max / latest / argMax):
+sum(toDecimal128OrNull(toString(om_events.data.<path>), 19))
+```
+
+`toString(data.<path>)` renders whatever the JSON Variant holds (number,
+string, integer, null) to its canonical text form; `toDecimal128OrNull`
+parses that into an exact `Decimal128(19)`. NULL on un-parseable values,
+no precision loss on bigints. Verified equal to the old `.:Float64`-based
+form on `Float64`-stored paths down to the ULP, and the only form that
+returns non-NULL on `String`/`Int`-stored paths.
+
+The corollary: the float/decimal query split is gone — there's no reason
+to keep a `sum_hour` (float) alongside a `sum_hour_decimal`. Both
+scenarios now ship 20 queries (was 25), all using the type-agnostic
+decimal pattern. The bench is now apples-to-apples on the **only**
+billing-safe query shape.
+
 ### What this run measured
 
 Latest run: 10M rows, 10 iterations, seed 42, single-node ClickHouse
-26.2.19.43. Full reports under
+26.2.19.43, post-rewrite. Full reports under
 [`bench/results/`](bench/results/).
 
 **Native `JSON` vs `String`+`JSON_VALUE` (baseline → data-as-json)** across
-the 25 meter queries:
+the 20 type-agnostic decimal meter queries:
 
 | Slice | Median p50 Δ | Median CPU Δ |
 | --- | ---: | ---: |
-| All 25 queries | **−40%** | **−38%** |
-| Per-meter-path queries (LLM tokens, Kong status, …) | **−73% to −80%** | **−73% to −79%** |
-| Float aggregations on `$.value` (sum/avg/min/max…) | **−37% to −43%** | **−37% to −42%** |
-| Decimal aggregations | **−32% to −33%** | **−31% to −33%** |
-| `count_hour` (no JSON read) | 0% | 0% |
+| All 20 queries | **−31%** | **−31%** |
+| Per-meter-path queries (LLM tokens, Kong status, workload) | **−69% to −78%** | **−70% to −75%** |
+| `$.value` aggregations (sum/avg/min/max/latest, hour/day/month) | **−23% to −34%** | **−21% to −32%** |
+| `sum_hour_group1[_group2]` (1–2 groupBy paths) | **−44% to −62%** | **−44% to −61%** |
+| `count_hour` / `agent_runs_by_name` (no JSON read in agg) | ~0% | ~0% |
 
-The reason the per-meter-path queries (`kong_status_by_route`,
-`llm_tokens_by_model`, `agent_runs_by_name`, `workload_seconds_by_region`)
-win the hardest: `JSON_VALUE` on a `String` column re-parses the whole
-document on every row, while a native `JSON` typed subcolumn reads only
-that path. The benefit grows with how much of `data` you don't need.
+The per-meter-path queries (`kong_status_by_route`, `llm_tokens_by_model`,
+`workload_seconds_by_region`) win the hardest because `JSON_VALUE` on a
+`String` column re-parses the whole document for every row, while native
+JSON typed subcolumn access reads only the path's column. The benefit
+grows with how much of `data` you don't need.
 
-**Cost on ingest:** baseline 108K events/s → data-as-json 93K events/s,
-**−13.6%**. Accepted under a query-time objective.
+**Cost on ingest:** baseline 111K events/s → data-as-json 88K events/s,
+**−21%**. Accepted under a query-time objective.
 
 **`bloom_filter` on `id`** for the lookup-by-id path (`WHERE namespace = ?
 AND id = ?`, no time bound — the one access pattern the ORDER BY can't
@@ -109,10 +142,11 @@ prune). `EXPLAIN indexes=1` on a literal id at 10M rows:
 
 | | Parts | Granules |
 | --- | ---: | ---: |
-| Without the bloom (`use_skip_indexes=0`) | 11/11 | 1224/1224 |
-| With the bloom | **3/11** | **11/1224** |
+| Without the bloom (`use_skip_indexes=0`) | 7/7 | 1223/1223 |
+| With the bloom | **4/7** | **11/1223** |
 
-That's ~110× fewer granules and ~4× fewer parts touched. Single-query
+That's ~110× fewer granules touched (the parts number depends on the
+bloom's false-positive rate for the particular id). Single-query
 wall-clock at this size doesn't show it cleanly because the scan is fast
 when everything is in page cache; the payoff is multi-tenant, not-fully-cached,
 concurrent load — where the I/O reduction binds.

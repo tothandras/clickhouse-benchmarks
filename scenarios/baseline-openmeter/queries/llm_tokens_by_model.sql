@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(om_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(om_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  sum(ifNotFinite(toFloat64OrNull(JSON_VALUE(om_events.data, '$.tokens')), NULL)) AS value,
+  sum(toDecimal128OrNull(JSON_VALUE(om_events.data, '$.tokens'), 19)) AS value,
   JSON_VALUE(om_events.data, '$.model') AS model,
   JSON_VALUE(om_events.data, '$.provider') AS provider
 FROM om_events
