@@ -117,6 +117,15 @@ wall-clock at this size doesn't show it cleanly because the scan is fast
 when everything is in page cache; the payoff is multi-tenant, not-fully-cached,
 concurrent load — where the I/O reduction binds.
 
+The ClickHouse
+[skipping-indexes doc](https://clickhouse.com/docs/guides/best-practices/skipping-indexes)
+notes that skip indexes work best when the indexed column correlates with the
+primary key. `id` doesn't (CloudEvents ids are arbitrary per event), so the
+doc's heuristic would predict the bloom is ineffective. The measured
+1224→11 result is the case where the heuristic is too conservative: for a
+point lookup of a single id, the bloom probe is cheap and most granules
+genuinely don't contain that id, so pruning works even without correlation.
+
 ### What we deliberately didn't pick
 
 - **Fixed `MATERIALIZED value`/`group1`/`group2` columns** — only help the
@@ -151,8 +160,19 @@ two of the queries are redundant (kept for documentation).
 query property.** The default `auto(N)` over-provisions threads for
 moderate-row meter queries on this 16-CPU host; for any specific deployment
 the sweet spot will be different. Set it in your client config or per query,
-not in the shipped schema. None of the other settings explored were worth
-baking into the queries; the defaults are the right defaults.
+not in the shipped schema. ClickHouse's
+[query-parallelism doc](https://clickhouse.com/docs/guides/best-practices/query-parallelism)
+also explicitly warns against tweaking the per-task thresholds
+(`merge_tree_min_rows_for_concurrent_read`, …); `max_threads` is *the* knob.
+
+> When investigating *why* a query is fast or slow, set
+> `enable_filesystem_cache=0` per query to bypass the page cache — that
+> exposes the real I/O cost the cache is hiding. It's a debugging knob, not
+> a production setting. (Recommended by the
+> [query-optimization doc](https://clickhouse.com/docs/guides/best-practices/query-optimization).)
+
+None of the other settings explored were worth baking into the queries;
+the defaults are the right defaults.
 
 ### The per-meter overlay (a different question)
 
