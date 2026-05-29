@@ -1,12 +1,20 @@
-# ch-playground
+# ClickHouse Benchmarks for OpenMeter
 
-ClickHouse table-design benchmark harness. Each scenario is a self-contained
-variant (table schema + indexes + partitioning + ordering key) for the same
-use-case, so ingest throughput and query latency can be compared head-to-head.
+**Goal:** find the ClickHouse table design + query shape with the lowest
+query-time CPU and latency for [OpenMeter](https://openmeter.io) usage metering —
+across all tenants and meters, under the constraint that meters are user-defined
+(`valueProperty` / `groupBy` are JSON paths chosen at query time), exact billing
+is required (`uniqExact`, `toDecimal128OrNull`), and the raw events table must
+not fan out per-meter at insert time.
 
-Inspired by [`clickhouse-playground`](../clickhouse-playground). Targets a
-single ClickHouse node so table-design variants can be compared head-to-head
-on the same host.
+Each `scenarios/<name>/` is a self-contained variant (DDL + indexes + partitioning
++ ordering key + the canonical meter query set) of the *same* `om_events` use
+case, run head-to-head on a single ClickHouse node so the only variable is the
+table design. Every run writes a JSON result and a markdown report under
+`bench/results/<scenario>/` (both tracked in git), so the head-to-head record is
+auditable on GitHub. The synthesized verdict — including the recommended DDL and
+query templates — lives in the [Findings](#findings--optimal-clickhouse-table--query)
+section below.
 
 ## Layout
 
