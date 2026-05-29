@@ -1,0 +1,29 @@
+# devenv / direnv
+.devenv/
+.devenv.flake.nix
+.devcontainer.json
+.direnv/
+
+# node tooling (deps installed from pnpm-lock.yaml on shell entry)
+node_modules/
+
+# devenv-managed kubeconfig
+.kube/
+
+# stray clickhouse-server data when started from the repo root with a
+# relative <path> (defensive — .devenv/clickhouse-server/data/ is gitignored
+# under .devenv/ already)
+/data/
+
+# Go
+/bin/
+*.test
+*.out
+
+# editor
+.vscode/
+.idea/
+.DS_Store
+
+# claude code runtime state
+.claude/scheduled_tasks.lock
