@@ -1,0 +1,52 @@
+{
+  "scenario": "with-id-bloom",
+  "harness_commit": "22f0e1d",
+  "sweep_id": "20260529T211111Z",
+  "started_at": "2026-05-29T23:15:08.792229+02:00",
+  "finished_at": "2026-05-29T23:16:57.538365+02:00",
+  "cluster": {
+    "version": "26.2.19.43",
+    "is_single_node": true,
+    "clusters": [
+      "default"
+    ]
+  },
+  "concurrency": 1,
+  "ingest": {
+    "source": "go-seeder",
+    "rows": 10000000,
+    "duration_seconds": 107.860366375,
+    "events_per_second": 92712.46089812848,
+    "batch_size": 10000
+  },
+  "queries": [
+    {
+      "name": "lookup_by_id",
+      "concurrency": 1,
+      "iterations": 10,
+      "p0_sec": 0.029,
+      "p10_sec": 0.029,
+      "p20_sec": 0.029,
+      "p30_sec": 0.029,
+      "p40_sec": 0.03,
+      "p50_sec": 0.03,
+      "p60_sec": 0.03,
+      "p70_sec": 0.03,
+      "p80_sec": 0.032,
+      "p90_sec": 0.032,
+      "p95_sec": 0.043,
+      "p99_sec": 0.043,
+      "p99_9_sec": 0.043,
+      "p99_99_sec": 0.043,
+      "qps": 23.038,
+      "rps": 156493508.681,
+      "mib_per_sec": 5872.136,
+      "result_rps": 23.038,
+      "result_mib_per_sec": 0,
+      "cpu_p50_us": 193818,
+      "cpu_p95_us": 250521.5499999999,
+      "mem_avg_bytes": 388840823,
+      "cpu_source": "os_cpu"
+    }
+  ]
+}

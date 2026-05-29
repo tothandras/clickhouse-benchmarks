@@ -77,46 +77,66 @@ PARTITION BY toYYYYMM(time)
 ORDER BY (namespace, type, subject, toStartOfHour(time));
 ```
 
-### Why this and not the alternatives
+### What this run measured
 
-- **Native `JSON` beats `String`+`JSON_VALUE`.** Meters define their own
-  paths, so the table can't pre-extract them. Native JSON gives typed
-  subcolumns on any path; `String` re-parses the whole document each scan.
-  On paths the benchmark had never touched, the speedup was **3–9×**
-  (including a nested path and a decimal path). The cost is ~21% lower
-  ingest throughput, which we accept under a query-time objective.
-- **`CODEC(ZSTD(3))` on the `data` column** is the one robust generic
-  query-time win: ~−11% CPU, −21% memory, −18% disk, uniform across float,
-  decimal, and non-value paths. It compresses every path without naming
-  any, so it survives the "no per-meter knowledge" rule.
-- **`bloom_filter` on `id`** fixes the one access pattern the ORDER BY
-  can't help: `WHERE namespace = ? AND id = ?` with no time bound. Prunes
-  611→3 granules at 5M rows, ≈2× better p99 under concurrency. Generic and
-  no row duplication.
-- **Fixed `MATERIALIZED` columns** for `value`/`group1`/`group2` only win
-  for the meters they were hand-cut for, so they're disqualified by the
-  per-meter constraint — any new meter would need new DDL and a backfill.
-- **JSON typed-path hints** (`data JSON(value Float64, …)`) give a real
-  11× on a known hot path, but they hardcode that path. Useful as
-  per-deployment tuning when the hot paths are known, not as the shipped
-  schema.
-- **A `bloom_filter` on `subject`** is mostly redundant: `subject` is
-  already the third ORDER BY prefix, so the primary index does the
-  pruning. Skip it.
+Latest run: 10M rows, 10 iterations, seed 42, single-node ClickHouse
+26.2.19.43. Full reports under
+[`bench/results/`](bench/results/).
+
+**Native `JSON` vs `String`+`JSON_VALUE` (baseline → data-as-json)** across
+the 25 meter queries:
+
+| Slice | Median p50 Δ | Median CPU Δ |
+| --- | ---: | ---: |
+| All 25 queries | **−40%** | **−38%** |
+| Per-meter-path queries (LLM tokens, Kong status, …) | **−73% to −80%** | **−73% to −79%** |
+| Float aggregations on `$.value` (sum/avg/min/max…) | **−37% to −43%** | **−37% to −42%** |
+| Decimal aggregations | **−32% to −33%** | **−31% to −33%** |
+| `count_hour` (no JSON read) | 0% | 0% |
+
+The reason the per-meter-path queries (`kong_status_by_route`,
+`llm_tokens_by_model`, `agent_runs_by_name`, `workload_seconds_by_region`)
+win the hardest: `JSON_VALUE` on a `String` column re-parses the whole
+document on every row, while a native `JSON` typed subcolumn reads only
+that path. The benefit grows with how much of `data` you don't need.
+
+**Cost on ingest:** baseline 108K events/s → data-as-json 93K events/s,
+**−13.6%**. Accepted under a query-time objective.
+
+**`bloom_filter` on `id`** for the lookup-by-id path (`WHERE namespace = ?
+AND id = ?`, no time bound — the one access pattern the ORDER BY can't
+prune). `EXPLAIN indexes=1` on a literal id at 10M rows:
+
+| | Parts | Granules |
+| --- | ---: | ---: |
+| Without the bloom (`use_skip_indexes=0`) | 11/11 | 1224/1224 |
+| With the bloom | **3/11** | **11/1224** |
+
+That's ~110× fewer granules and ~4× fewer parts touched. Single-query
+wall-clock at this size doesn't show it cleanly because the scan is fast
+when everything is in page cache; the payoff is multi-tenant, not-fully-cached,
+concurrent load — where the I/O reduction binds.
+
+### What we deliberately didn't pick
+
+- **Fixed `MATERIALIZED value`/`group1`/`group2` columns** — only help the
+  meters they're hand-cut for, so they violate the "any meter, any path"
+  rule and need DDL + backfill on every new meter.
+- **JSON typed-path hints** (`data JSON(value Float64, …)`) — a big win
+  for *known* hot paths, but they hardcode those paths. Useful as
+  per-deployment tuning, not as the shipped schema.
+- **Skip indexes on `subject`** — redundant with the ORDER BY prefix.
+- **Materialized views / projections on the raw table** — per-insert
+  fan-out across thousands of meters collapses ingest.
 
 ### The per-meter overlay (a different question)
 
 The OpenMeter team's
 [meter-query-engine direction](https://github.com/openmeterio/openmeter/pull/3764)
 leaves `om_events` frozen and adds per-meter *side tables* that pre-extract
-`value` and `groupBy` at write time. Measured here (`map-columns` vs
-`data-as-json`, same data), the side table won **−58% CPU, −81% memory**
-on the per-meter slice — a real win.
-
-It's not the answer for the current system, though, because (1) it requires
-the ingest pipeline to know each meter's paths up front (the architecture
-deliberately doesn't today), and (2) one event becomes N physical rows when
-N meters watch its event type, so write and storage scale with meter count
-rather than event count. The recommendation above is the optimum for the
-shared raw table that exists today; the side-table direction is the
-optimum for a different system you'd have to build alongside it.
+`value` and `groupBy` at write time. That's a different shape (not in this
+run) but a real query-time win — at the cost of write/storage scaling
+with meter count rather than event count, and the ingest pipeline needing
+to know each meter's paths up front. The recommendation above is the
+optimum for the shared raw table that exists today; the side-table
+direction is the optimum for a different system you'd build alongside it.
