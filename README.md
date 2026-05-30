@@ -113,49 +113,59 @@ billing-safe query shape.
 ### What this run measured
 
 Latest run: 10M rows, 10 iterations, seed 42, single-node ClickHouse
-26.2.19.43. Three table-type variants, 20 type-agnostic decimal meter
+26.2.19.43. Four table-design variants, 20 type-agnostic decimal meter
 queries each. Full reports under [`bench/results/`](bench/results/).
 
-**Median CPU Δ across the 20 queries:**
+**Median CPU Δ across the 20 queries (vs baseline `data String`):**
 
-| | vs baseline (`data String`) | vs data-as-json |
-| --- | ---: | ---: |
-| `data-as-json` (`data JSON`) | **−34%** | — |
-| `data-as-map` (`data Map(String, String)`) | **−25%** | **+13%** |
+| Variant | DDL change vs baseline | Median CPU Δ | Ingest Δ |
+| --- | --- | ---: | ---: |
+| `data-as-json` | `data JSON` | **−39%** | −13% |
+| `data-as-map` | `data Map(String, String)` | −28% | −17% |
+| `order-by-extended-time` | `data JSON` + ORDER BY extends with raw `time` (PK still `…toStartOfHour(time)`) | **−40%** | **−27%** |
 
 **Per-meter-path queries** (read fields from large multi-field payloads —
 where the cost of touching the whole `data` value is highest):
 
-| query | vs baseline | vs data-as-json |
-| --- | ---: | ---: |
-| `kong_status_by_route` | −35% | +204% |
-| `llm_tokens_by_model` | −27% | +153% |
-| `workload_seconds_by_region` | −18% | +46% |
+| query | json | map | ext |
+| --- | ---: | ---: | ---: |
+| `kong_status_by_route` | **−82%** | −34% | **−84%** |
+| `llm_tokens_by_model` | **−79%** | −31% | **−79%** |
+| `workload_seconds_by_region` | −20% | −19% | **−62%** |
 
-Native JSON wins these the hardest because typed-subcolumn access reads
-only the named path; a String column has to parse the whole document, and
-the Map column has to materialize every key/value pair to find the named
-key. The wider the payload (Kong has 13 fields, LLM has 9), the worse Map
-looks against JSON.
+Native JSON wins by reading only the named typed subcolumn; a String
+column has to parse the whole document on every row, and a Map column has
+to materialize every key/value pair to find the named key. The wider the
+payload, the worse Map looks against JSON. `data-as-map` is the middle
+option — roughly half the JSON speedup at half the JSON ingest cost.
 
-**`$.value` aggregations** (sum / avg / min / max / latest / unique, on a
-narrow payload — baseline `api_request` carries just `{value, group1,
-group2}`) cluster around **−24% (Map vs baseline)** and **+10–13% (Map
-vs JSON)**. `sum_hour_group1[_group2]` is similar: Map saves ~25% over
-baseline but gives back ~40% to JSON.
+**`order-by-extended-time` ≈ `data-as-json` overall, with two genuine wins
+and a real ingest cost.** Adding raw `time` to ORDER BY (PK unchanged) gives
+median CPU −3% vs json across the 20 queries, but the range is wide:
+
+| query | ext vs json |
+| --- | ---: |
+| `workload_seconds_by_region` | **−52%** |
+| `unique_count_hour` | **−15%** |
+| `kong_status_by_route` | −9% |
+| most `$.value` aggregations | ±5% (noise) |
+| `avg_hour`, `count_hour` | +15% / +17% (small absolute regressions) |
+
+The wins come from time-clustered rows letting the columnar reader prune
+harder for time-range queries and from `uniqExact` seeing tighter
+clusters. The cost is **−27% ingest throughput vs baseline** (vs −13% for
+plain json) — the stricter sort makes merges more expensive. A narrow
+win at a real write cost; not an obvious upgrade over `data-as-json`.
 
 **`count_hour` / `agent_runs_by_name`** (no `data` read in the agg) move
-within run-to-run noise across all three variants.
+within run-to-run noise across all variants.
 
-**Ingest cost:** baseline **102K** ev/s → data-as-json **84K** (−18%) →
-data-as-map **98K** (−4%). Map is much cheaper to write than JSON because
-it's straight key→value storage, no JSON Variant overhead.
-
-**Tradeoff summary.** `data-as-json` is the query-time winner.
-`data-as-map` is the middle option: query-side roughly halfway between
-baseline and JSON, but ingest cost almost identical to baseline. Choose
-Map if write throughput dominates and payloads are flat string→string;
-choose JSON if read latency dominates or payloads need nested structure.
+**Tradeoff summary.** `data-as-json` is the recommended default: largest
+generic query-time win at a modest ingest cost. `data-as-map` is the
+middle option — choose it if write throughput dominates *and* payloads
+are flat string→string. `order-by-extended-time` is a narrow lever for
+deployments dominated by partial-time-range scans or `uniqExact`; not a
+generic upgrade.
 
 **`bloom_filter` on `id`** for the lookup-by-id path (`WHERE namespace = ?
 AND id = ?`, no time bound — the one access pattern the ORDER BY can't
@@ -163,8 +173,8 @@ prune). `EXPLAIN indexes=1` on a literal id at 10M rows:
 
 | | Parts | Granules |
 | --- | ---: | ---: |
-| Without the bloom (`use_skip_indexes=0`) | 11/11 | 1224/1224 |
-| With the bloom | **4/11** | **14/1224** |
+| Without the bloom (`use_skip_indexes=0`) | 4/4 | 1223/1223 |
+| With the bloom | 4/4 | **11/1223** |
 
 That's ~110× fewer granules touched (the parts number depends on the
 bloom's false-positive rate for the particular id). Single-query
