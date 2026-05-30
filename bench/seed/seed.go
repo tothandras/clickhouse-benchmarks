@@ -1,7 +1,10 @@
 // Package seed generates synthetic OpenMeter-shaped events for benchmark scenarios.
 //
-// The seeder produces events matching the baseline om_events table shape:
+// The seeder produces events matching the baseline events-table shape:
 // namespace + type (LowCardinality) + subject + JSON-encoded data payload.
+// Each scenario uses its own table name (e.g. data_as_json_events,
+// proposal_events) so scenarios coexist without clobbering each other; the
+// caller passes the target table via Config.Table.
 // To model real OpenMeter usage, where the data field is user-controlled and
 // differs per event type, the seeder emits a weighted mix of heterogeneous
 // event types (see DefaultConfig): a dominant baseline "api_request" carrying
@@ -40,6 +43,7 @@ type EventType struct {
 // baseline-openmeter-scenario cardinality requirement: ≥1 namespace,
 // ≥2 types, ≥100 subjects, ≥3 days of time spread.
 type Config struct {
+	Table     string        // Target table name (e.g. data_as_json_events); REQUIRED.
 	Namespace string        // Single namespace; baseline uses one.
 	Types     []string      // Type names; Types[0] is the baseline type the default {type} param binds to.
 	Subjects  int           // Subject pool size; ≥100 for baseline.
@@ -290,13 +294,16 @@ type Result struct {
 	AsyncInsert     bool
 }
 
-// Run executes the seed against conn, inserting Config.Rows events into om_events.
+// Run executes the seed against conn, inserting Config.Rows events into Config.Table.
 func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 10_000
 	}
 	if cfg.Rows <= 0 {
 		return Result{}, fmt.Errorf("seed: Rows must be > 0")
+	}
+	if cfg.Table == "" {
+		return Result{}, fmt.Errorf("seed: Table must be set")
 	}
 	if len(cfg.Types) == 0 || cfg.Subjects <= 0 || len(cfg.Group1) == 0 || len(cfg.Group2) == 0 {
 		return Result{}, fmt.Errorf("seed: Types, Subjects, Group1, Group2 must be non-empty")
@@ -305,7 +312,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 		return Result{}, fmt.Errorf("seed: EventTypes must be non-empty")
 	}
 
-	format, err := resolveDataFormat(ctx, conn)
+	format, err := resolveDataFormat(ctx, conn, cfg.Table)
 	if err != nil {
 		return Result{}, fmt.Errorf("seed: resolve data column format: %w", err)
 	}
@@ -337,7 +344,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 	start := time.Now()
 
 	// Build the SETTINGS-aware INSERT statement once.
-	insertSQL := "INSERT INTO om_events (namespace, id, type, subject, source, time, data, ingested_at, stored_at, store_row_id)"
+	insertSQL := fmt.Sprintf("INSERT INTO %s (namespace, id, type, subject, source, time, data, ingested_at, stored_at, store_row_id)", cfg.Table)
 	settings := map[string]any{}
 	if cfg.AsyncInsert {
 		settings["async_insert"] = 1
@@ -405,16 +412,16 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 	}, nil
 }
 
-// resolveDataFormat inspects the live om_events.data column and picks an
+// resolveDataFormat inspects the live <table>.data column and picks an
 // encoding for the writer to use. JSON / String → JSON text; Map(...) → flat
 // map. The scenario's init.sql is the single source of truth for the column
 // type, so adding a new physical layout means a new init.sql and no harness
 // change.
-func resolveDataFormat(ctx context.Context, conn driver.Conn) (dataFormat, error) {
+func resolveDataFormat(ctx context.Context, conn driver.Conn, table string) (dataFormat, error) {
 	var colType string
-	const q = `SELECT type FROM system.columns WHERE database = currentDatabase() AND table = 'om_events' AND name = 'data'`
-	if err := conn.QueryRow(ctx, q).Scan(&colType); err != nil {
-		return 0, fmt.Errorf("probe om_events.data type: %w", err)
+	const q = `SELECT type FROM system.columns WHERE database = currentDatabase() AND table = ? AND name = 'data'`
+	if err := conn.QueryRow(ctx, q, table).Scan(&colType); err != nil {
+		return 0, fmt.Errorf("probe %s.data type: %w", table, err)
 	}
 	switch {
 	case colType == "JSON" || colType == "String":
@@ -422,7 +429,7 @@ func resolveDataFormat(ctx context.Context, conn driver.Conn) (dataFormat, error
 	case len(colType) >= 4 && colType[:4] == "Map(":
 		return dataFormatMap, nil
 	default:
-		return 0, fmt.Errorf("unsupported om_events.data type %q (expected JSON, String, or Map(...))", colType)
+		return 0, fmt.Errorf("unsupported %s.data type %q (expected JSON, String, or Map(...))", table, colType)
 	}
 }
 

@@ -18,7 +18,7 @@
 -- (every value is a String). Queries convert to Decimal128 with
 -- toDecimal128OrNull(data['<path>'], 19) for billing-exact arithmetic.
 
-CREATE TABLE IF NOT EXISTS om_events (
+CREATE TABLE IF NOT EXISTS data_as_map_events (
   namespace String,
   id String,
   type LowCardinality(String),

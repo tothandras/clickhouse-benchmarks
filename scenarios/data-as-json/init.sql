@@ -10,7 +10,7 @@
 -- Queries under queries/ use the JSON dot-path form (`data.value`) instead
 -- of `JSON_VALUE(data, '$.value')`. See queries/*.sql.
 
-CREATE TABLE IF NOT EXISTS om_events (
+CREATE TABLE IF NOT EXISTS data_as_json_events (
   namespace String,
   id String,
   type LowCardinality(String),

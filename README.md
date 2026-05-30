@@ -60,6 +60,8 @@ the *untyped* JSON root and convert via `toDecimal128OrNull(toString(data.<path>
 below), `uniqExact` for `UNIQUE_COUNT`.
 
 ```sql
+-- Apply as `om_events` in production; benched as `proposal_events` here so
+-- scenarios coexist in the same database without clobbering each other.
 CREATE TABLE IF NOT EXISTS om_events (
   namespace   String,
   id          String,
@@ -121,30 +123,29 @@ queries each (`scenarios/proposal/` runs 21, the meter set plus
 
 | Variant | DDL change vs baseline | Median p50 Δ | Median CPU Δ | Ingest Δ |
 | --- | --- | ---: | ---: | ---: |
-| `data-as-json` | `data JSON` | −38% | **−39%** | −13% |
-| `data-as-map` | `data Map(String, String)` | −29% | −28% | −17% |
-| `order-by-extended-time` | `data JSON` + ORDER BY extends with raw `time` (PK still `…toStartOfHour(time)`) | −37% | **−40%** | **−27%** |
-| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−44%** | −34% | −16% |
+| `data-as-json` | `data JSON` | −32% | −30% | −13% |
+| `data-as-map` | `data Map(String, String)` | −21% | −21% | −5% |
+| `order-by-extended-time` | `data JSON` + ORDER BY extends with raw `time` (PK still `…toStartOfHour(time)`) | −33% | **−35%** | −13% |
+| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−41%** | −32% | −14% |
 
 **The `proposal` scenario stacks three composable wins:** `data JSON` (the
 table-type), `CODEC(ZSTD(3))` on `data` (compression: 359 → 205 MiB on
-the `data` column, **−43% disk**), and a `bloom_filter` skip index on
-`id` (point lookups prune 1225 → 11 granules, ~111×). It's the recommended
-default: best p50 of the four variants, modest CPU regression vs plain
-json (ZSTD costs decompression for big I/O wins on wide-payload queries —
-`workload_seconds_by_region` −26% CPU vs json, `unique_count_hour` −22%,
-`agent_runs_by_name` −26%; the rest pay +5–10% CPU for the disk and p50
-gains). Ingest stays close to plain json (−16% vs baseline, vs −13% for
-plain json — the extra ZSTD work is small).
+the `data` column, **−43% disk** vs `data-as-json`'s LZ4), and a
+`bloom_filter` skip index on `id` (point lookups prune 1225 → 11
+granules, ~111×). It's the recommended default: best p50 of the four
+variants and roughly tied with `data-as-json` on CPU (proposal median CPU
+0% vs plain json this run, with two clear CPU wins — `unique_count_hour`
+−29% and `agent_runs_by_name` −16% — and the rest within ±5%). The big
+disk win is essentially free at query time.
 
 **Per-meter-path queries** (read fields from large multi-field payloads —
-where the cost of touching the whole `data` value is highest):
+where the cost of touching the whole `data` value is highest), CPU vs baseline:
 
-| query | json | map | ext |
-| --- | ---: | ---: | ---: |
-| `kong_status_by_route` | **−82%** | −34% | **−84%** |
-| `llm_tokens_by_model` | **−79%** | −31% | **−79%** |
-| `workload_seconds_by_region` | −20% | −19% | **−62%** |
+| query | json | map | ext | proposal |
+| --- | ---: | ---: | ---: | ---: |
+| `kong_status_by_route` | **−77%** | −35% | **−82%** | **−79%** |
+| `llm_tokens_by_model` | **−71%** | −23% | **−77%** | **−72%** |
+| `workload_seconds_by_region` | −53% | −28% | **−65%** | **−56%** |
 
 Native JSON wins by reading only the named typed subcolumn; a String
 column has to parse the whole document on every row, and a Map column has
@@ -152,33 +153,38 @@ to materialize every key/value pair to find the named key. The wider the
 payload, the worse Map looks against JSON. `data-as-map` is the middle
 option — roughly half the JSON speedup at half the JSON ingest cost.
 
-**`order-by-extended-time` ≈ `data-as-json` overall, with two genuine wins
-and a real ingest cost.** Adding raw `time` to ORDER BY (PK unchanged) gives
-median CPU −3% vs json across the 20 queries, but the range is wide:
+**`order-by-extended-time` consistently beats `data-as-json`** in this
+run — median CPU **−7% vs json**, 19 of 20 queries faster (only
+`agent_runs_by_name` regresses, +16% on a 20ms baseline). The biggest
+wins go to per-meter-path and groupBy queries:
 
 | query | ext vs json |
 | --- | ---: |
-| `workload_seconds_by_region` | **−52%** |
-| `unique_count_hour` | **−15%** |
-| `kong_status_by_route` | −9% |
-| most `$.value` aggregations | ±5% (noise) |
-| `avg_hour`, `count_hour` | +15% / +17% (small absolute regressions) |
+| `workload_seconds_by_region` | **−26%** |
+| `kong_status_by_route` | **−24%** |
+| `llm_tokens_by_model` | **−22%** |
+| `sum_hour_group1[_group2][_no_prewhere]` | **−11% to −17%** |
+| `unique_count_hour` | −15% |
+| `$.value` aggregations | −3% to −8% |
 
-The wins come from time-clustered rows letting the columnar reader prune
-harder for time-range queries and from `uniqExact` seeing tighter
-clusters. The cost is **−27% ingest throughput vs baseline** (vs −13% for
-plain json) — the stricter sort makes merges more expensive. A narrow
-win at a real write cost; not an obvious upgrade over `data-as-json`.
+Time-clustered rows let the columnar reader skip more granules on
+time-range queries, and `uniqExact` benefits from tighter clusters.
+Ingest cost is essentially the same as plain json (−13% vs baseline) in
+this run — earlier runs showed up to −27% ingest, so the cost is
+variable and worth re-checking on the target hardware. A genuine win,
+but the gap to `proposal` (which adds ZSTD on top and includes the
+bloom) is smaller than the gap from baseline.
 
 **`count_hour` / `agent_runs_by_name`** (no `data` read in the agg) move
 within run-to-run noise across all variants.
 
 **Tradeoff summary.** `proposal` is the recommended default: best p50,
 −43% disk for the data column, and the bloom on `id` is essentially
-free. `data-as-map` is the middle option — choose it if write throughput
-dominates *and* payloads are flat string→string. `order-by-extended-time`
-is a narrow lever for deployments dominated by partial-time-range scans
-or `uniqExact`; not a generic upgrade.
+free. `order-by-extended-time` is the runner-up — consistently faster
+than plain `data-as-json`, but the ingest cost varies run-to-run; verify
+on target hardware before adopting. `data-as-map` is the middle option —
+choose it if write throughput dominates *and* payloads are flat
+string→string (it does not match native JSON on read latency).
 
 **`bloom_filter` on `id`** for the lookup-by-id path (`WHERE namespace = ?
 AND id = ?`, no time bound — the one access pattern the ORDER BY can't
@@ -186,8 +192,8 @@ prune). `EXPLAIN indexes=1` on a literal id at 10M rows:
 
 | | Parts | Granules |
 | --- | ---: | ---: |
-| Without the bloom (`use_skip_indexes=0`) | 4/4 | 1223/1223 |
-| With the bloom | 4/4 | **11/1223** |
+| Without the bloom (`use_skip_indexes=0`) | 10/10 | 1224/1224 |
+| With the bloom | **3/10** | **12/1224** |
 
 That's ~110× fewer granules touched (the parts number depends on the
 bloom's false-positive rate for the particular id). Single-query

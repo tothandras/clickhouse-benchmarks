@@ -26,7 +26,7 @@
 -- Queries are byte-identical to scenarios/data-as-json/queries/ — only the
 -- table layout changes.
 
-CREATE TABLE IF NOT EXISTS om_events (
+CREATE TABLE IF NOT EXISTS order_by_extended_time_events (
   namespace String,
   id String,
   type LowCardinality(String),

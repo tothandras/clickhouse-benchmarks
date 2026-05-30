@@ -29,7 +29,7 @@
 -- Everything else (column set, PARTITION BY, ORDER BY, the minmax skip
 -- index on stored_at) is upstream OpenMeter DDL, unchanged.
 
-CREATE TABLE IF NOT EXISTS om_events (
+CREATE TABLE IF NOT EXISTS proposal_events (
   namespace String,
   id String,
   type LowCardinality(String),

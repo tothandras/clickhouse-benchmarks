@@ -10,7 +10,7 @@
 --
 -- The real signal is the query PLAN, not its wall-clock. Run:
 --   EXPLAIN indexes = 1
---   SELECT ... FROM om_events
+--   SELECT ... FROM proposal_events
 --   WHERE namespace = '<ns>' AND id = '<a literal id from the table>';
 -- and confirm the `om_events_id_bloom` skip index prunes the scan (measured:
 -- 611 -> 3 granules, 9 -> 1 parts at 5M rows). Against scenarios/data-as-json
@@ -25,19 +25,19 @@
 -- SELECT list matches event_query_v2 (includes `data`) so row shape and read
 -- cost reflect the real query, not a key-only shortcut.
 SELECT
-  om_events.id AS id,
-  om_events.type AS type,
-  om_events.subject AS subject,
-  om_events.source AS source,
-  om_events.time AS time,
-  om_events.data AS data,
-  om_events.ingested_at AS ingested_at,
-  om_events.stored_at AS stored_at,
-  om_events.store_row_id AS store_row_id
-FROM om_events
-WHERE om_events.namespace = {namespace:String}
-  AND om_events.id = (
-    SELECT id FROM om_events
+  proposal_events.id AS id,
+  proposal_events.type AS type,
+  proposal_events.subject AS subject,
+  proposal_events.source AS source,
+  proposal_events.time AS time,
+  proposal_events.data AS data,
+  proposal_events.ingested_at AS ingested_at,
+  proposal_events.stored_at AS stored_at,
+  proposal_events.store_row_id AS store_row_id
+FROM proposal_events
+WHERE proposal_events.namespace = {namespace:String}
+  AND proposal_events.id = (
+    SELECT id FROM proposal_events
     WHERE namespace = {namespace:String}
     ORDER BY namespace, type, subject, time
     LIMIT 1 OFFSET 100000

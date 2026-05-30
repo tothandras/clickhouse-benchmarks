@@ -11,7 +11,13 @@ Current variants:
 - `proposal/` — **The recommended default.** Stacks the three composable wins each variant proved independently: `data JSON` + `CODEC(ZSTD(3))` + a `bloom_filter` skip index on `id`. Includes the full 20-query meter set plus `lookup_by_id.sql` so the bloom is exercised in the same scenario. See the top-level README's Findings section for the head-to-head numbers.
 - `with-id-bloom/` — Same as `data-as-json`, plus one **`bloom_filter` skip index on `id`** (`INDEX om_events_id_bloom id TYPE bloom_filter(0.01) GRANULARITY 1`). Targets the `event_query_v2` lookup-by-id path (`WHERE namespace = … AND id = …`, no time bound), which the `(namespace, type, subject, hour)` ORDER BY cannot prune. Generic (names no meter path), format-agnostic (hashes the whole id string; `id` is user-provided with no fixed format), no row duplication. It ships only `queries/lookup_by_id.sql` — the meter-aggregation queries are byte-identical to `data-as-json` and provably unaffected by the index, so they are not duplicated here; run `data-as-json` for those. `lookup_by_id.sql` is a **functional check, not a clean latency benchmark** — `id` has no harness-bindable parameter so the query resolves a real id via an inner subquery whose scan dominates the reported wall-clock; the real signal is `EXPLAIN indexes = 1` on a *literal* id, which shows the bloom pruning `611 → 3` granules at 5M rows. Measured wall-clock with a literal id: ≈14–42× fewer rows read and ≈2× better p99 under concurrency, near break-even median on a single in-cache node (the payoff is multi-tenant / cold-cache / concurrent load).
 
-**Footgun**: every scenario targets the same table name (`om_events`) in the same default database. Running two scenarios in sequence against one ClickHouse without dropping the table in between produces wrong results — `CREATE TABLE IF NOT EXISTS` is a no-op against the first scenario's schema and the second scenario seeds + queries against the wrong layout. Either `DROP TABLE om_events` between scenarios, or point each at its own database via the DSN.
+**Table naming.** Each scenario uses its own table name, derived from the
+directory: `scenarios/<dir>/` → `<dir_with_underscores>_events` (e.g.
+`data-as-json` → `data_as_json_events`, `proposal` → `proposal_events`).
+Scenarios coexist in the same database without clobbering each other — no
+need to drop between scenarios or point at separate databases. The
+harness derives the table name from the scenario directory; init.sql,
+queries, and the seeder all use the same derived name.
 
 ```
 scenarios/<name>/
@@ -39,9 +45,9 @@ other directories are skipped with a warning.
 Scenarios that need data populated can either:
 
 1. **Provide a `seed.sql`** for pure-SQL loaders (e.g.
-   `INSERT INTO om_events SELECT * FROM generateRandom(...) LIMIT N`). The
-   harness executes it once after `init.sql`. Best when the data shape can be
-   expressed in pure SQL.
+   `INSERT INTO <scenario>_events SELECT * FROM generateRandom(...) LIMIT N`).
+   The harness executes it once after `init.sql`. Best when the data shape can
+   be expressed in pure SQL.
 
 2. **Rely on the shared Go seeder under `bench/seed/`**. This is the default
    for scenarios that need a structured JSON payload, deterministic RNG, or

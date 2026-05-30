@@ -136,15 +136,15 @@ func run(ctx context.Context, f *flags) error {
 	for _, sc := range scenarios {
 		fmt.Printf("\n== scenario: %s ==\n", sc.Name)
 		startedAt := time.Now()
+		table := scenarioTable(sc.Name)
 
-		// Every scenario's init.sql creates om_events with CREATE TABLE IF NOT
-		// EXISTS, so a table left by a prior scenario (different schema, same
-		// name) would silently survive and corrupt this scenario's seed. Drop
-		// first when we're about to reseed; honor --skip-seed (which means
-		// "reuse whatever is already there") by leaving the table untouched.
+		// Drop first when we're about to reseed so a stale table from an earlier
+		// run of THIS scenario doesn't shadow the new init.sql with the wrong
+		// schema. Each scenario uses its own table name so scenarios coexist
+		// without clobbering each other; --skip-seed reuses whatever is there.
 		if !f.skipSeed {
-			if err := conn.Exec(ctx, "DROP TABLE IF EXISTS om_events SYNC"); err != nil {
-				return fmt.Errorf("drop om_events before %s: %w", sc.Name, err)
+			if err := conn.Exec(ctx, "DROP TABLE IF EXISTS "+table+" SYNC"); err != nil {
+				return fmt.Errorf("drop %s before %s: %w", table, sc.Name, err)
 			}
 		}
 
@@ -155,7 +155,7 @@ func run(ctx context.Context, f *flags) error {
 
 		var ingest *runner.IngestResult
 		if !f.skipSeed {
-			ingest, err = doSeed(ctx, conn, sc, f)
+			ingest, err = doSeed(ctx, conn, sc, table, f)
 			if err != nil {
 				return err
 			}
@@ -243,7 +243,7 @@ func hostPort(opts *clickhouse.Options) (string, int, error) {
 	return h, port, nil
 }
 
-func doSeed(ctx context.Context, conn driver.Conn, sc runner.Scenario, f *flags) (*runner.IngestResult, error) {
+func doSeed(ctx context.Context, conn driver.Conn, sc runner.Scenario, table string, f *flags) (*runner.IngestResult, error) {
 	// Pure-SQL seed wins if scenario provides one (e.g. generateRandom-based).
 	if sc.HasSeed {
 		fmt.Println(" seed.sql ...")
@@ -258,6 +258,7 @@ func doSeed(ctx context.Context, conn driver.Conn, sc runner.Scenario, f *flags)
 	}
 
 	cfg := seed.DefaultConfig()
+	cfg.Table = table
 	cfg.Rows = f.rows
 	cfg.BatchSize = f.batchSize
 	cfg.AsyncInsert = f.asyncInsert
@@ -306,4 +307,12 @@ func defaultParams(_ *flags) map[string]string {
 // handle the apostrophe case.
 func sqlString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// scenarioTable derives the table name for a scenario by replacing `-` with
+// `_` and appending `_events`. The scenario directory name is the single
+// source of truth: scenarios/data-as-json/ → data_as_json_events. Each
+// scenario uses its own table so scenarios coexist without clobbering.
+func scenarioTable(name string) string {
+	return strings.ReplaceAll(name, "-", "_") + "_events"
 }

@@ -9,7 +9,7 @@
 -- update this file and bump the commit SHA above (a CI check is a future
 -- change — see openspec/changes/drift-detect-openmeter-ddl/).
 
-CREATE TABLE IF NOT EXISTS om_events (
+CREATE TABLE IF NOT EXISTS baseline_openmeter_events (
   namespace String,
   id String,
   type LowCardinality(String),

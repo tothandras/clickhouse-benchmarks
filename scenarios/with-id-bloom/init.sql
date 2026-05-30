@@ -27,7 +27,7 @@
 -- whole-row duplication -> the insert-side write amplification OpenMeter's
 -- no-fan-out rule forbids. The bloom index is the only generic win here.
 
-CREATE TABLE IF NOT EXISTS om_events (
+CREATE TABLE IF NOT EXISTS with_id_bloom_events (
   namespace String,
   id String,
   type LowCardinality(String),
