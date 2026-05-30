@@ -39,6 +39,25 @@
     };
   };
 
+  # ClickHouse: project-local server managed by devenv. Default ports
+  # (9000 native, 8123 HTTP), default user `default` no password. Started
+  # with `devenv up`; data lives under .devenv/state/clickhouse/.
+  # https://devenv.sh/services/clickhouse/
+  #
+  # The bench's per-query CPU/memory probe (bench/runner/results.go) reads
+  # from system.query_log, so we enable it explicitly — devenv's minimal
+  # default config omits it.
+  services.clickhouse = {
+    enable = true;
+    config = ''
+      query_log:
+        database: system
+        table: query_log
+        partition_by: toYYYYMM(event_date)
+        flush_interval_milliseconds: 1000
+    '';
+  };
+
   cachix.enable = false;
 
   # Generates .devcontainer.json from this devenv configuration.

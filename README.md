@@ -30,7 +30,7 @@ table and query templates that come out the other side are in
 direnv allow            # or: devenv shell
 
 # Point at a reachable ClickHouse and run the baseline.
-export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9100/default"
+export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9000/default"
 go build -o .devenv/bin/bench ./bench/cmd/bench
 ./.devenv/bin/bench --scenario baseline-openmeter
 ```
@@ -41,7 +41,7 @@ format.
 The dev shell also installs [`mcp-clickhouse`](https://github.com/ClickHouse/mcp-clickhouse)
 into `.devenv/state/venv/`; `.mcp.json` at the project root wires it to Claude
 Code (project-scoped, read-only by default, points at the local ClickHouse on
-`127.0.0.1:8223`). Run `claude` from the project to use the MCP server for
+`127.0.0.1:8123`). Run `claude` from the project to use the MCP server for
 ad-hoc inspection of the scenario tables.
 
 ## Workflow

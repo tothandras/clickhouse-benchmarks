@@ -225,7 +225,7 @@ func renderParams(sql string, params map[string]string) (string, error) {
 //
 // Two formats to parse:
 //
-//	127.0.0.1:9100, queries: 10, QPS: 63.615, RPS: 3065742.290, MiB/s: 257.340, result RPS: 9160.585, result MiB/s: 0.332.
+//	127.0.0.1:9000, queries: 10, QPS: 63.615, RPS: 3065742.290, MiB/s: 257.340, result RPS: 9160.585, result MiB/s: 0.332.
 //	0%		0.003 sec.
 //	...
 //	99.99%		0.007 sec.

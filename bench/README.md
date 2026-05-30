@@ -15,7 +15,7 @@ than a hand-rolled loop would give us.
 ```bash
 # Any reachable ClickHouse + the `clickhouse-benchmark` binary on PATH
 # (the devenv provides both via the `clickhouse` package):
-export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9100/default"
+export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9000/default"
 
 go build -o .devenv/bin/bench ./bench/cmd/bench
 ./.devenv/bin/bench --scenario baseline-openmeter
