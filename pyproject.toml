@@ -1,0 +1,8 @@
+[project]
+name = "ch-playground-mcp"
+version = "0.0.0"
+description = "Python venv for the mcp-clickhouse MCP server used by Claude Code in this repo. The benchmark harness itself is Go; nothing else uses Python."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp-clickhouse",
+]

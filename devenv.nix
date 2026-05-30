@@ -27,6 +27,18 @@
     pnpm.enable = true;
   };
 
+  # Python is here only to host mcp-clickhouse for the Claude Code MCP
+  # integration. The harness itself is Go; nothing else uses Python.
+  # Installed via uv into the project venv (devenv.sh/languages/python).
+  languages.python = {
+    enable = true;
+    venv.enable = true;
+    uv = {
+      enable = true;
+      sync.enable = true;
+    };
+  };
+
   cachix.enable = false;
 
   # Generates .devcontainer.json from this devenv configuration.
@@ -40,6 +52,7 @@
     echo "  clickhouse-client: $(clickhouse-client --version 2>/dev/null | head -1)"
     echo "  go:                $(go version 2>/dev/null)"
     echo "  openspec:          $(openspec --version 2>/dev/null || echo missing)"
+    echo "  mcp-clickhouse:    $([ -x .devenv/state/venv/bin/mcp-clickhouse ] && echo installed || echo missing) (Claude Code MCP server, configured in .mcp.json)"
   '';
 
   # https://devenv.sh/tasks/

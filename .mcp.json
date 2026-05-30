@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "clickhouse": {
+      "command": ".devenv/state/venv/bin/mcp-clickhouse",
+      "env": {
+        "CLICKHOUSE_HOST": "127.0.0.1",
+        "CLICKHOUSE_PORT": "8223",
+        "CLICKHOUSE_USER": "default",
+        "CLICKHOUSE_PASSWORD": "",
+        "CLICKHOUSE_SECURE": "false",
+        "CLICKHOUSE_VERIFY": "false",
+        "CLICKHOUSE_DATABASE": "default"
+      }
+    }
+  }
+}

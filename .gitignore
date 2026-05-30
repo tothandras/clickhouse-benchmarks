@@ -7,6 +7,13 @@
 # node tooling (deps installed from pnpm-lock.yaml on shell entry)
 node_modules/
 
+# Python venv for the mcp-clickhouse MCP server (managed by devenv + uv;
+# rebuilt from pyproject.toml on shell entry). uv.lock IS committed for
+# reproducible installs; the venv itself is not.
+.venv/
+__pycache__/
+*.pyc
+
 # devenv-managed kubeconfig
 .kube/
 

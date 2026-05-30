@@ -38,6 +38,12 @@ go build -o .devenv/bin/bench ./bench/cmd/bench
 See [`bench/README.md`](bench/README.md) for the harness flags and the result-file
 format.
 
+The dev shell also installs [`mcp-clickhouse`](https://github.com/ClickHouse/mcp-clickhouse)
+into `.devenv/state/venv/`; `.mcp.json` at the project root wires it to Claude
+Code (project-scoped, read-only by default, points at the local ClickHouse on
+`127.0.0.1:8223`). Run `claude` from the project to use the MCP server for
+ad-hoc inspection of the scenario tables.
+
 ## Workflow
 
 New scenarios and methodology changes go through OpenSpec:
