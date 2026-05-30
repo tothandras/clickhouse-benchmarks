@@ -5,26 +5,30 @@
 -- Stacked levers (each measured independently on 10M heterogeneous events,
 -- single-node CH 26.2.19.43, --iterations 10 --seed 42):
 --
---   1. data JSON              (vs `data String`):  median CPU −39%, ingest −13%
+--   1. data JSON              (vs `data String`):  median CPU −30%
 --   2. CODEC(ZSTD(3)) on data (vs default LZ4):    median p50 −16%, disk −43%
---                                                  (+5% CPU regression accepted)
+--                                                  (+5% CPU regression accepted
+--                                                   for the disk and p50 wins)
 --   3. bloom_filter on id     (no measured cost):  point lookups prune
---                                                  1223 → 11 granules (≈111×)
+--                                                  1224 → 12 granules (≈100×)
 --
--- Each of (1)(2)(3) was verified head-to-head against the next-best
--- variant on this same 10M dataset before being included here; nothing in
--- this DDL is from a historical claim that wasn't reproduced on the
--- current data.
+-- Each lever was verified head-to-head against the next-best variant on
+-- this same 10M dataset before being included here; nothing in this DDL
+-- is from a historical claim that wasn't reproduced on the current data.
 --
 -- Deliberately NOT stacked here:
 --   - data Map(String, String) — mutually exclusive with data JSON on
 --     the same axis (table-type). Map trades query-time for ingest-time;
 --     pick one, not both. See scenarios/data-as-map/ if write throughput
 --     dominates.
---   - ORDER BY extension with raw `time` — narrow query win (median CPU
---     −3% vs plain json) at a real ingest cost (−27% vs baseline vs
---     −13% for plain json). Not a generic upgrade; see
---     scenarios/order-by-extended-time/ for the standalone measurement.
+--   - ORDER BY extension with raw `time` — standalone it gives a clean
+--     win vs data-as-json (median CPU −7%), but the lever does NOT
+--     compose on top of ZSTD: stacking it here regressed p50 +3% AND
+--     CPU +3% vs this proposal without it (19/19 queries flat or worse),
+--     and cost ~7% ingest. Likely because ZSTD already compresses the
+--     time-clustered `data` column well, so the extra in-granule sort
+--     adds cost without I/O reduction. See scenarios/order-by-extended-time/
+--     to use it standalone (without ZSTD); not appropriate as a default.
 --
 -- Everything else (column set, PARTITION BY, ORDER BY, the minmax skip
 -- index on stored_at) is upstream OpenMeter DDL, unchanged.
