@@ -20,7 +20,7 @@ func TestRenderReport(t *testing.T) {
 			IsSingleNode: true,
 			Clusters:     []string{"default", "test_cluster_one_shard_three_replicas"},
 		},
-		Concurrency: 1,
+		Concurrency: []int{1},
 		Ingest: &IngestResult{
 			Source:          "go-seeder",
 			Rows:            1_000_000,
@@ -31,6 +31,8 @@ func TestRenderReport(t *testing.T) {
 		Queries: []BenchResult{
 			{
 				Name:        "sum_hour",
+				Concurrency: 1,
+				CacheState:  "warm",
 				P50Sec:      0.018, P95Sec: 0.024, P99Sec: 0.030,
 				QPS:         55.5,
 				CPUp50Us:    &cpu,
@@ -38,14 +40,23 @@ func TestRenderReport(t *testing.T) {
 				CPUSource:   "os_cpu",
 			},
 			{
-				Name:   "lookup_by_id",
-				P50Sec: 0.007, P95Sec: 0.012, P99Sec: 0.041,
-				QPS:    600,
+				Name:        "lookup_by_id",
+				Concurrency: 1,
+				CacheState:  "warm",
+				P50Sec:      0.007, P95Sec: 0.012, P99Sec: 0.041,
+				QPS:         600,
 				// CPU* nil → query_log unavailable
+				IndexPruning: &IndexPruning{
+					LiteralID:       "abc",
+					GranulesWithout: 1224, GranulesWith: 12,
+					PartsWithout: 10, PartsWith: 3,
+				},
 			},
 			{
-				Name:  "broken_query",
-				Error: "syntax error near FOO",
+				Name:        "broken_query",
+				Concurrency: 1,
+				CacheState:  "warm",
+				Error:       "syntax error near FOO",
 			},
 		},
 	}
@@ -69,9 +80,11 @@ func TestRenderReport(t *testing.T) {
 		"1000000 rows",
 		"batch=10000",
 		"## Queries",
-		"| sum_hour | 18.0 | 24.0 | 30.0 | 55.5 | 12.3 | os_cpu | 7.0 |",
-		"| lookup_by_id | 7.0 | 12.0 | 41.0 | 600.0 | n/a | n/a | n/a |",
-		"| broken_query | error: syntax error near FOO |",
+		"| sum_hour | 1 | warm | 18.0 | 24.0 | 30.0 | 55.5 | 12.3 | os_cpu | 7.0 |",
+		"| lookup_by_id | 1 | warm | 7.0 | 12.0 | 41.0 | 600.0 | n/a | n/a | n/a |",
+		"| broken_query | 1 | warm | error: syntax error near FOO |",
+		"### Index pruning",
+		"| lookup_by_id | 1224 → 12 | 10 → 3 |",
 		"<details>",
 		"<summary><code>sum_hour</code></summary>",
 		"SELECT 1 -- sum_hour body",

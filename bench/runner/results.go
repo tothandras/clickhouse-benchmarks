@@ -40,9 +40,30 @@ type Run struct {
 	StartedAt          time.Time          `json:"started_at"`
 	FinishedAt         time.Time          `json:"finished_at"`
 	ClusterFingerprint ClusterFingerprint `json:"cluster"`
-	Concurrency        int                `json:"concurrency"`
+	Concurrency        IntList            `json:"concurrency"`
+	Repeat             int                `json:"repeat,omitempty"`
 	Ingest             *IngestResult      `json:"ingest,omitempty"`
 	Queries            []BenchResult      `json:"queries"`
+}
+
+// IntList marshals as a JSON array but unmarshals from either a JSON array
+// (new multi-level runs) or a bare number (result files written before the
+// concurrency sweep, when `concurrency` was a scalar). This keeps `bench
+// compare` and any other reader working against the pre-sweep committed files.
+type IntList []int
+
+func (l *IntList) UnmarshalJSON(b []byte) error {
+	var arr []int
+	if err := json.Unmarshal(b, &arr); err == nil {
+		*l = arr
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return fmt.Errorf("concurrency: want number or array, got %s", b)
+	}
+	*l = []int{n}
+	return nil
 }
 
 // QueryLogAvailable reports whether system.query_log exists and is queryable

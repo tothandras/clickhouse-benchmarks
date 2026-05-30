@@ -11,8 +11,9 @@
 // {value, group1, group2} (which the canonical meter queries read), plus
 // kong_api_request, llm_request, workload, and agent_run types that each carry
 // their own distinct field-set. Numeric payload fields are emitted as JSON
-// strings (e.g. "tokens":"1") to match real producers, so queries must apply
-// toFloat64OrNull(JSON_VALUE(...)) exactly like upstream OpenMeter.
+// strings (e.g. "tokens":"1") to match real producers, so queries extract them
+// with toDecimal128OrNull over the path's stringified form (exact billing,
+// any JSON-stored type).
 //
 // RNG is seedable so reruns across table-design variants compare against
 // identical data (same per-row type assignment and identical payloads).
@@ -44,7 +45,8 @@ type EventType struct {
 // ≥2 types, ≥100 subjects, ≥3 days of time spread.
 type Config struct {
 	Table     string        // Target table name (e.g. data_as_json_events); REQUIRED.
-	Namespace string        // Single namespace; baseline uses one.
+	Namespace string        // Primary namespace; the default {namespace} param binds to it.
+	Namespaces int          // Total namespaces to spread rows across; ≤1 means single-namespace (just Namespace).
 	Types     []string      // Type names; Types[0] is the baseline type the default {type} param binds to.
 	Subjects  int           // Subject pool size; ≥100 for baseline.
 	Group1    []string      // Categorical group1 values (baseline api_request payload).
@@ -60,6 +62,12 @@ type Config struct {
 	AsyncInsert bool
 	// WaitAsyncInsert sets wait_for_async_insert when AsyncInsert is true.
 	WaitAsyncInsert bool
+
+	// MixedValueStorage, when true, emits the baseline `value` path in mixed JSON
+	// storage (number / stringified number / Float64-overflowing bigint) so the
+	// type-agnostic value-extraction correctness fix is actually exercised on the
+	// dominant path. Default false = uniform Float64 (historical distribution).
+	MixedValueStorage bool
 }
 
 // DefaultConfig returns a Config with sane baseline defaults.
@@ -80,7 +88,7 @@ func DefaultConfig() Config {
 		Group1:    group1,
 		Group2:    group2,
 		EventTypes: []EventType{
-			{Name: "api_request", Weight: 50, BuildData: buildBaseline(group1, group2)},
+			{Name: "api_request", Weight: 50, BuildData: buildBaseline(group1, group2, false)},
 			{Name: "kong_api_request", Weight: 25, BuildData: buildKongAPIRequest},
 			{Name: "llm_request", Weight: 15, BuildData: buildLLMRequest},
 			{Name: "workload", Weight: 7, BuildData: buildWorkload},
@@ -137,10 +145,31 @@ func storeRowID(t time.Time, entropy rngReader) string {
 
 // buildBaseline returns the baseline payload builder carrying the numeric
 // value plus two categorical group fields the canonical meter queries read.
-func buildBaseline(group1, group2 []string) func(rng *rand.Rand) map[string]any {
+//
+// When mixedStorage is true the `value` path is emitted in three rotating JSON
+// storage forms under the SINGLE path — a JSON number, a JSON-stringified
+// number ("123.4"), and a bigint that overflows Float64 — so the harness
+// exercises the type-agnostic correctness fix (toDecimal128OrNull(toString(...))
+// reads every form; the typed `.:Float64` accessor reads NULL on the string and
+// bigint forms). When false (default) `value` is a uniform JSON Float64, the
+// historical distribution, so existing results stay comparable.
+func buildBaseline(group1, group2 []string, mixedStorage bool) func(rng *rand.Rand) map[string]any {
 	return func(rng *rand.Rand) map[string]any {
+		var value any
+		if mixedStorage {
+			switch rng.IntN(3) {
+			case 0:
+				value = rng.Float64() * 1000 // JSON number
+			case 1:
+				value = fmt.Sprintf("%.4f", rng.Float64()*1000) // JSON-stringified number
+			default:
+				value = fmt.Sprintf("%d", uint64(1)<<60+rng.Uint64()%1000) // bigint, overflows Float64 exactness
+			}
+		} else {
+			value = rng.Float64() * 1000
+		}
 		return map[string]any{
-			"value":  rng.Float64() * 1000,
+			"value":  value,
 			"group1": pick(rng, group1),
 			"group2": pick(rng, group2),
 		}
@@ -148,7 +177,7 @@ func buildBaseline(group1, group2 []string) func(rng *rand.Rand) map[string]any 
 }
 
 // Heterogeneous payloads. Numeric fields are emitted as JSON strings to match
-// real OpenMeter producers, so queries must parse them via toFloat64OrNull.
+// real OpenMeter producers, so queries must parse them via toDecimal128OrNull.
 func buildKongAPIRequest(rng *rand.Rand) map[string]any {
 	statuses := []string{"200", "200", "200", "201", "400", "404", "500"} // skewed to 200
 	return map[string]any{
@@ -203,6 +232,7 @@ func buildAgentRun(rng *rand.Rand) map[string]any {
 // the table's `data` column type (see resolveDataFormat).
 type eventRow struct {
 	ID         string            // user-provided idempotency id
+	Namespace  string            // tenant namespace
 	Type       string            // event type / type column
 	Subject    string            // subject column
 	Time       time.Time         // event time
@@ -226,6 +256,7 @@ const (
 type genCtx struct {
 	cfg         Config
 	subjects    []string
+	namespaces  []string
 	cumWeights  []int
 	totalWeight int
 	timeStart   time.Time
@@ -251,8 +282,16 @@ func (g *genCtx) genEvent(idx int) eventRow {
 	subject := g.subjects[rng.IntN(len(g.subjects))]
 	id := hex16(rng)
 	srid := storeRowID(t, rngReader{rng})
+	// Namespace draw is LAST and skipped entirely for the single-namespace case,
+	// so multi-namespace seeding does not shift the RNG stream of any earlier
+	// field — single-namespace data stays byte-identical to pre-namespace runs.
+	namespace := g.cfg.Namespace
+	if len(g.namespaces) > 1 {
+		namespace = g.namespaces[rng.IntN(len(g.namespaces))]
+	}
 	return eventRow{
 		ID:         id,
+		Namespace:  namespace,
 		Type:       et.Name,
 		Subject:    subject,
 		Time:       t,
@@ -285,6 +324,20 @@ func flattenToStringMap(payload map[string]any) map[string]string {
 	return out
 }
 
+// withMixedBaseline returns a copy of types with the "api_request" entry's
+// BuildData replaced by a mixed-value-storage builder. The original slice is
+// left untouched.
+func withMixedBaseline(types []EventType, group1, group2 []string) []EventType {
+	out := make([]EventType, len(types))
+	copy(out, types)
+	for i := range out {
+		if out[i].Name == "api_request" {
+			out[i].BuildData = buildBaseline(group1, group2, true)
+		}
+	}
+	return out
+}
+
 // Result reports what the seeder did.
 type Result struct {
 	Rows            int // total rows inserted
@@ -312,11 +365,18 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 		return Result{}, fmt.Errorf("seed: EventTypes must be non-empty")
 	}
 
+	// When mixed value-storage is requested, rebuild the baseline (api_request)
+	// builder so `value` is emitted in mixed JSON storage. Matched by name so it
+	// works regardless of catalog order or a custom catalog.
+	if cfg.MixedValueStorage {
+		cfg.EventTypes = withMixedBaseline(cfg.EventTypes, cfg.Group1, cfg.Group2)
+	}
+
 	format, err := resolveDataFormat(ctx, conn, cfg.Table)
 	if err != nil {
 		return Result{}, fmt.Errorf("seed: resolve data column format: %w", err)
 	}
-	// Cumulative-weight table for O(log n) type selection, built once.
+	// Cumulative-weight table for weighted type selection, built once.
 	cumWeights := make([]int, len(cfg.EventTypes))
 	totalWeight := 0
 	for i, et := range cfg.EventTypes {
@@ -336,6 +396,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 	g := &genCtx{
 		cfg:         cfg,
 		subjects:    subjects,
+		namespaces:  NamespaceList(cfg.Namespace, cfg.Namespaces),
 		cumWeights:  cumWeights,
 		totalWeight: totalWeight,
 		timeStart:   timeStart,
@@ -381,7 +442,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 				dataCol = row.Data
 			}
 			err := batch.Append(
-				cfg.Namespace,    // namespace
+				row.Namespace,    // namespace
 				row.ID,           // id
 				row.Type,         // type
 				row.Subject,      // subject
@@ -440,6 +501,22 @@ func Subjects(n int) []string {
 	out := make([]string, n)
 	for i := range out {
 		out[i] = fmt.Sprintf("subject-%05d", i)
+	}
+	return out
+}
+
+// NamespaceList returns the deterministic namespace pool of size n with primary
+// at index 0. n ≤ 1 yields just [primary] (single-namespace, current behavior).
+// The extra namespaces are named ns-00001, ns-00002, … so the primary the
+// {namespace} param binds to stays a real, recognizable tenant in the mix.
+func NamespaceList(primary string, n int) []string {
+	if n <= 1 {
+		return []string{primary}
+	}
+	out := make([]string, n)
+	out[0] = primary
+	for i := 1; i < n; i++ {
+		out[i] = fmt.Sprintf("ns-%05d", i)
 	}
 	return out
 }

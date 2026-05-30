@@ -53,6 +53,28 @@ type BenchResult struct {
 	// CPUSource names the query_log counter behind the CPU figures:
 	// "os_cpu" or "real_time" (fallback). Empty when CPU wasn't captured.
 	CPUSource string `json:"cpu_source,omitempty"`
+
+	// CacheState is "warm" (default, page cache reused across iterations) or
+	// "cold" (measured with enable_filesystem_cache=0). In a paired run a query
+	// produces two BenchResults with the same Name and differing CacheState.
+	CacheState string `json:"cache_state,omitempty"`
+
+	// IndexPruning, when non-nil, holds the EXPLAIN indexes=1 granule-pruning
+	// signal for an index-sensitive query (e.g. lookup_by_id against a
+	// bloom_filter on id). Captured separately from the timed run because the
+	// query's own wall-clock is dominated by its id-resolver subquery.
+	IndexPruning *IndexPruning `json:"index_pruning,omitempty"`
+}
+
+// IndexPruning records granules/parts a query scans with skip indexes disabled
+// vs enabled, for a literal-id lookup. The ratio is the bloom filter's real,
+// diffable evidence (the query's wall-clock is not — see lookup_by_id.sql).
+type IndexPruning struct {
+	LiteralID         string `json:"literal_id"`
+	GranulesWithout   int    `json:"granules_without"` // use_skip_indexes=0
+	GranulesWith      int    `json:"granules_with"`    // index active
+	PartsWithout      int    `json:"parts_without"`
+	PartsWith         int    `json:"parts_with"`
 }
 
 // EnsureBinary checks that `clickhouse-benchmark` is on PATH.
@@ -81,7 +103,10 @@ func Bench(ctx context.Context, opts BenchOpts, q Query) BenchResult {
 
 	logComment := fmt.Sprintf("bench:%s:%s:%s", opts.SweepID, opts.Scenario, q.Name)
 	if opts.CPUProbe != nil {
-		sql = withLogComment(sql, logComment)
+		sql = appendSetting(sql, "log_comment = '"+strings.ReplaceAll(logComment, "'", "''")+"'")
+	}
+	if opts.ColdCache {
+		sql = appendSetting(sql, "enable_filesystem_cache = 0")
 	}
 
 	args := []string{
@@ -122,6 +147,10 @@ func Bench(ctx context.Context, opts BenchOpts, q Query) BenchResult {
 	res.Name = q.Name
 	res.Concurrency = opts.Concurrency
 	res.Iterations = opts.Iterations
+	res.CacheState = "warm"
+	if opts.ColdCache {
+		res.CacheState = "cold"
+	}
 
 	if opts.CPUProbe != nil {
 		if stats, perr := opts.CPUProbe(ctx, logComment); perr != nil {
@@ -136,26 +165,18 @@ func Bench(ctx context.Context, opts BenchOpts, q Query) BenchResult {
 	return res
 }
 
-// withLogComment appends `SETTINGS log_comment = '<c>'` to sql, merging into
-// an existing trailing SETTINGS clause rather than producing a second one
-// (ClickHouse rejects two SETTINGS clauses). The comment is a harness-built
-// string with no user input, so simple quoting suffices.
-func withLogComment(sql, comment string) string {
+// appendSetting adds `setting` to sql's trailing SETTINGS clause, merging into
+// an existing one with a comma rather than producing a second clause
+// (ClickHouse rejects two SETTINGS clauses). `setting` is a harness-built
+// `key = value` fragment with no user input. Safe to call repeatedly to stack
+// multiple settings (log_comment, enable_filesystem_cache, ...).
+func appendSetting(sql, setting string) string {
 	trimmed := strings.TrimRight(strings.TrimSpace(sql), ";")
-	lit := "log_comment = '" + strings.ReplaceAll(comment, "'", "''") + "'"
-	// Find a top-level SETTINGS keyword (case-insensitive) near the end.
-	if idx := lastSettingsIndex(trimmed); idx >= 0 {
-		return trimmed + ", " + lit
+	// A trailing top-level SETTINGS keyword means merge; otherwise open a clause.
+	if strings.Contains(strings.ToUpper(trimmed), "SETTINGS ") {
+		return trimmed + ", " + setting
 	}
-	return trimmed + " SETTINGS " + lit
-}
-
-// lastSettingsIndex returns the byte index of a trailing top-level SETTINGS
-// keyword, or -1. We only care whether the query already ends with a SETTINGS
-// clause; the baseline queries that use SETTINGS put it last.
-func lastSettingsIndex(sql string) int {
-	upper := strings.ToUpper(sql)
-	return strings.LastIndex(upper, "SETTINGS ")
+	return trimmed + " SETTINGS " + setting
 }
 
 // CPUStats holds the per-query CPU/memory figures read from system.query_log.
@@ -196,6 +217,11 @@ type BenchOpts struct {
 	// CPUProbe, when non-nil, is called after the benchmark completes to read
 	// CPU/memory from query_log. Nil disables CPU capture entirely.
 	CPUProbe CPUProbe
+
+	// ColdCache, when true, runs the query with enable_filesystem_cache=0 so the
+	// real I/O cost is measured instead of the warm page-cache best case. The
+	// result records CacheState accordingly.
+	ColdCache bool
 }
 
 // renderParams substitutes every `{name:Type}` placeholder in sql with the

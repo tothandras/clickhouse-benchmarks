@@ -30,13 +30,23 @@ go build -o .devenv/bin/bench ./bench/cmd/bench
 | `--scenarios-dir` | `scenarios`      | Where to discover scenarios.                                     |
 | `--results-dir`   | `bench/results`  | Where to write result JSON files.                                |
 | `--iterations`    | `10`             | Measured iterations per query (`clickhouse-benchmark -i`).       |
-| `--concurrency`   | `1`              | Concurrent query streams (`clickhouse-benchmark -c`).            |
+| `--concurrency`   | `1`              | Concurrency level(s), e.g. `1,8,16`; each measured separately.   |
+| `--cold-paired`   | `false`          | Measure each query warm AND cold (`enable_filesystem_cache=0`).  |
+| `--repeat`        | `1`              | Run the query set N times (reuses seed) for run-to-run variance. |
+| `--require-clean` | `false`          | Refuse to run if the harness git tree is dirty.                  |
 | `--rows`          | `1_000_000`      | Rows for the Go seeder.                                          |
 | `--batch-size`    | `10_000`         | INSERT batch size for the Go seeder.                             |
 | `--async-insert`  | `false`          | Set `async_insert=1` on seed inserts.                            |
 | `--wait-async`    | `false`          | Set `wait_for_async_insert=1` (only with `--async-insert`).      |
 | `--seed`          | `42`             | RNG seed for deterministic data generation.                      |
+| `--namespaces`    | `1`              | Spread seeded rows across N namespaces (multi-tenant table).     |
+| `--mixed-value`   | `false`          | Emit baseline `value` as mixed JSON (number/string/bigint).      |
 | `--skip-seed`     | `false`          | Skip seeding (run queries against existing data).                |
+
+`bench compare <baseline> <candidate>` reads the latest result JSON from each
+scenario and prints the per-query p50/CPU delta table (the comparison tables in
+the top-level README are otherwise maintained by hand). It compares the warm,
+lowest-concurrency measurement on each side so the diff stays apples-to-apples.
 
 ## Dependency: `clickhouse-benchmark`
 
