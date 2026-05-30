@@ -113,16 +113,29 @@ billing-safe query shape.
 ### What this run measured
 
 Latest run: 10M rows, 10 iterations, seed 42, single-node ClickHouse
-26.2.19.43. Four table-design variants, 20 type-agnostic decimal meter
-queries each. Full reports under [`bench/results/`](bench/results/).
+26.2.19.43. Five table-design variants, 20 type-agnostic decimal meter
+queries each (`scenarios/proposal/` runs 21, the meter set plus
+`lookup_by_id.sql`). Full reports under [`bench/results/`](bench/results/).
 
-**Median CPU Δ across the 20 queries (vs baseline `data String`):**
+**Median Δ across the 20 meter queries (vs baseline `data String`):**
 
-| Variant | DDL change vs baseline | Median CPU Δ | Ingest Δ |
-| --- | --- | ---: | ---: |
-| `data-as-json` | `data JSON` | **−39%** | −13% |
-| `data-as-map` | `data Map(String, String)` | −28% | −17% |
-| `order-by-extended-time` | `data JSON` + ORDER BY extends with raw `time` (PK still `…toStartOfHour(time)`) | **−40%** | **−27%** |
+| Variant | DDL change vs baseline | Median p50 Δ | Median CPU Δ | Ingest Δ |
+| --- | --- | ---: | ---: | ---: |
+| `data-as-json` | `data JSON` | −38% | **−39%** | −13% |
+| `data-as-map` | `data Map(String, String)` | −29% | −28% | −17% |
+| `order-by-extended-time` | `data JSON` + ORDER BY extends with raw `time` (PK still `…toStartOfHour(time)`) | −37% | **−40%** | **−27%** |
+| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−44%** | −34% | −16% |
+
+**The `proposal` scenario stacks three composable wins:** `data JSON` (the
+table-type), `CODEC(ZSTD(3))` on `data` (compression: 359 → 205 MiB on
+the `data` column, **−43% disk**), and a `bloom_filter` skip index on
+`id` (point lookups prune 1225 → 11 granules, ~111×). It's the recommended
+default: best p50 of the four variants, modest CPU regression vs plain
+json (ZSTD costs decompression for big I/O wins on wide-payload queries —
+`workload_seconds_by_region` −26% CPU vs json, `unique_count_hour` −22%,
+`agent_runs_by_name` −26%; the rest pay +5–10% CPU for the disk and p50
+gains). Ingest stays close to plain json (−16% vs baseline, vs −13% for
+plain json — the extra ZSTD work is small).
 
 **Per-meter-path queries** (read fields from large multi-field payloads —
 where the cost of touching the whole `data` value is highest):
@@ -160,12 +173,12 @@ win at a real write cost; not an obvious upgrade over `data-as-json`.
 **`count_hour` / `agent_runs_by_name`** (no `data` read in the agg) move
 within run-to-run noise across all variants.
 
-**Tradeoff summary.** `data-as-json` is the recommended default: largest
-generic query-time win at a modest ingest cost. `data-as-map` is the
-middle option — choose it if write throughput dominates *and* payloads
-are flat string→string. `order-by-extended-time` is a narrow lever for
-deployments dominated by partial-time-range scans or `uniqExact`; not a
-generic upgrade.
+**Tradeoff summary.** `proposal` is the recommended default: best p50,
+−43% disk for the data column, and the bloom on `id` is essentially
+free. `data-as-map` is the middle option — choose it if write throughput
+dominates *and* payloads are flat string→string. `order-by-extended-time`
+is a narrow lever for deployments dominated by partial-time-range scans
+or `uniqExact`; not a generic upgrade.
 
 **`bloom_filter` on `id`** for the lookup-by-id path (`WHERE namespace = ?
 AND id = ?`, no time bound — the one access pattern the ORDER BY can't
