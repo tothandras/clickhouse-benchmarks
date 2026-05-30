@@ -1,0 +1,60 @@
+{
+  "scenario": "with-id-bloom",
+  "harness_commit": "1270fa3-dirty",
+  "sweep_id": "20260530T223154Z",
+  "started_at": "2026-05-31T00:42:26.160435+02:00",
+  "finished_at": "2026-05-31T00:44:36.11484+02:00",
+  "cluster": {
+    "version": "26.2.5.45",
+    "is_single_node": true
+  },
+  "concurrency": [
+    1
+  ],
+  "repeat": 1,
+  "ingest": {
+    "source": "go-seeder",
+    "rows": 10000000,
+    "duration_seconds": 128.823329042,
+    "events_per_second": 77625.69151383846,
+    "batch_size": 10000
+  },
+  "queries": [
+    {
+      "name": "lookup_by_id",
+      "concurrency": 1,
+      "iterations": 10,
+      "p0_sec": 0.06,
+      "p10_sec": 0.06,
+      "p20_sec": 0.061,
+      "p30_sec": 0.061,
+      "p40_sec": 0.061,
+      "p50_sec": 0.062,
+      "p60_sec": 0.062,
+      "p70_sec": 0.064,
+      "p80_sec": 0.071,
+      "p90_sec": 0.083,
+      "p95_sec": 0.097,
+      "p99_sec": 0.097,
+      "p99_9_sec": 0.097,
+      "p99_99_sec": 0.097,
+      "qps": 12.589,
+      "rps": 86115706.932,
+      "mib_per_sec": 3230.946,
+      "result_rps": 12.589,
+      "result_mib_per_sec": 0,
+      "cpu_p50_us": 951061.5,
+      "cpu_p95_us": 1525022.2499999995,
+      "mem_avg_bytes": 393939598.2,
+      "cpu_source": "real_time",
+      "cache_state": "warm",
+      "index_pruning": {
+        "literal_id": "b2662607f4c324a7",
+        "granules_without": 1226,
+        "granules_with": 18,
+        "parts_without": 18,
+        "parts_with": 6
+      }
+    }
+  ]
+}

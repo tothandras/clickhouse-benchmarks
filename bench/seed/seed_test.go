@@ -17,6 +17,7 @@ func newGenCtx(cfg Config) *genCtx {
 	return &genCtx{
 		cfg:         cfg,
 		subjects:    Subjects(cfg.Subjects),
+		namespaces:  NamespaceList(cfg.Namespace, cfg.Namespaces),
 		cumWeights:  cum,
 		totalWeight: total,
 		timeStart:   cfg.TimeEnd.Add(-cfg.TimeSpan),
@@ -49,6 +50,109 @@ func TestSeedDeterministic(t *testing.T) {
 		}
 		if d1[i] != d2[i] {
 			t.Fatalf("row %d data differs:\n %s\n %s", i, d1[i], d2[i])
+		}
+	}
+}
+
+func TestSeedNamespaceDistribution(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Namespaces = 5
+	g := newGenCtx(cfg)
+	const n = 50_000
+
+	counts := map[string]int{}
+	first := make([]string, n)
+	for i := 0; i < n; i++ {
+		ns := g.genEvent(i).Namespace
+		counts[ns]++
+		first[i] = ns
+	}
+	if len(counts) != 5 {
+		t.Fatalf("expected 5 namespaces, saw %d: %v", len(counts), counts)
+	}
+	if counts[cfg.Namespace] == 0 {
+		t.Errorf("primary namespace %q never generated", cfg.Namespace)
+	}
+	// Deterministic: a second pass yields identical per-row assignments.
+	g2 := newGenCtx(cfg)
+	for i := 0; i < n; i++ {
+		if got := g2.genEvent(i).Namespace; got != first[i] {
+			t.Fatalf("row %d namespace not deterministic: %q vs %q", i, got, first[i])
+		}
+	}
+}
+
+func TestSeedSingleNamespaceUnchanged(t *testing.T) {
+	// The namespace draw is skipped for n≤1, so single-namespace data (every
+	// field) must be byte-identical whether Namespaces is 0 or 1.
+	a := DefaultConfig()
+	a.Namespaces = 0
+	b := DefaultConfig()
+	b.Namespaces = 1
+	ga, gb := newGenCtx(a), newGenCtx(b)
+	for i := 0; i < 2000; i++ {
+		ea, eb := ga.genEvent(i), gb.genEvent(i)
+		if ea.Namespace != a.Namespace || eb.Namespace != b.Namespace {
+			t.Fatalf("row %d: single-namespace rows must carry the primary namespace", i)
+		}
+		if ea.ID != eb.ID || ea.Data != eb.Data || ea.Subject != eb.Subject || !ea.Time.Equal(eb.Time) {
+			t.Fatalf("row %d: single-namespace data diverged between Namespaces=0 and 1", i)
+		}
+	}
+}
+
+func TestSeedMixedValueStorage(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MixedValueStorage = true
+	cfg.EventTypes = withMixedBaseline(cfg.EventTypes, cfg.Group1, cfg.Group2)
+	g := newGenCtx(cfg)
+
+	var sawNumber, sawString, sawBigint bool
+	for i := 0; i < 20_000 && !(sawNumber && sawString && sawBigint); i++ {
+		e := g.genEvent(i)
+		if e.Type != "api_request" {
+			continue
+		}
+		var p map[string]any
+		if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
+			t.Fatalf("index %d not JSON: %v", i, err)
+		}
+		switch v := p["value"].(type) {
+		case float64:
+			sawNumber = true
+		case string:
+			sawString = true
+			// A value > 2^53 stored as a string is the case the typed `.:Float64`
+			// accessor cannot represent exactly but toDecimal128OrNull(toString)
+			// can — the whole point of the mixed-storage stress.
+			if len(v) >= 16 { // ~1e15+, the bigint branch (1<<60 ≈ 1.15e18)
+				sawBigint = true
+			}
+		default:
+			t.Fatalf("index %d: unexpected value type %T", i, v)
+		}
+	}
+	if !sawNumber {
+		t.Error("mixed storage never emitted a JSON number value")
+	}
+	if !sawString {
+		t.Error("mixed storage never emitted a JSON string value")
+	}
+	if !sawBigint {
+		t.Error("mixed storage never emitted a Float64-overflowing bigint value")
+	}
+
+	// Default (uniform) config must NOT produce string values — guards the gate.
+	gu := newGenCtx(DefaultConfig())
+	for i := 0; i < 5_000; i++ {
+		e := gu.genEvent(i)
+		if e.Type != "api_request" {
+			continue
+		}
+		var p map[string]any
+		_ = json.Unmarshal([]byte(e.Data), &p)
+		if _, isStr := p["value"].(string); isStr {
+			t.Fatalf("index %d: uniform config emitted a string value; gate leaked", i)
 		}
 	}
 }
@@ -114,7 +218,7 @@ func TestSeedHeterogeneousPayloads(t *testing.T) {
 	if _, ok := llm["tokens"]; !ok {
 		t.Error("llm_request payload missing tokens")
 	}
-	// Numeric fields must be JSON strings (toFloat64OrNull fidelity).
+	// Numeric fields must be JSON strings (toDecimal128OrNull fidelity).
 	if _, isStr := llm["tokens"].(string); !isStr {
 		t.Errorf("tokens must be a JSON string, got %T", llm["tokens"])
 	}

@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(data_as_json_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(data_as_json_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  uniqExact(nullIf(toString(data_as_json_events.data.value.:Float64), 'null')) AS value,
+  uniqExact(nullIf(toString(data_as_json_events.data.value), 'null')) AS value,
   data_as_json_events.subject AS subject
 FROM data_as_json_events
 WHERE data_as_json_events.namespace = {namespace:String}

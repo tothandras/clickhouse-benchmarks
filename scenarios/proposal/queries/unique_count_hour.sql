@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(proposal_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(proposal_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  uniqExact(nullIf(toString(proposal_events.data.value.:Float64), 'null')) AS value,
+  uniqExact(nullIf(toString(proposal_events.data.value), 'null')) AS value,
   proposal_events.subject AS subject
 FROM proposal_events
 WHERE proposal_events.namespace = {namespace:String}

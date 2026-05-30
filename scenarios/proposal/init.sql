@@ -3,14 +3,20 @@
 -- usage metering on a single ClickHouse node.
 --
 -- Stacked levers (each measured independently on 10M heterogeneous events,
--- single-node CH 26.2.19.43, --iterations 10 --seed 42):
+-- single-node CH, --iterations 10 --seed 42):
 --
---   1. data JSON              (vs `data String`):  median CPU −30%
---   2. CODEC(ZSTD(3)) on data (vs default LZ4):    median p50 −16%, disk −43%
---                                                  (+5% CPU regression accepted
---                                                   for the disk and p50 wins)
+--   1. data JSON              (vs `data String`):  median CPU −34%, p50 −32%
+--   2. CODEC(ZSTD(3)) on data (vs default LZ4):    disk −43%, p50 −7% vs json
+--                                                  (this run; p50 direction is
+--                                                  stable, magnitude is not).
+--                                                  Query CPU is run-variable
+--                                                  and ~neutral (+5% / 0% / −8%
+--                                                  across runs) — adopted for the
+--                                                  disk and p50 wins, NOT a CPU win.
 --   3. bloom_filter on id     (no measured cost):  point lookups prune
---                                                  1224 → 12 granules (≈100×)
+--                                                  1223 → 17 granules (≈72×).
+--                                                  Inert for the meter queries
+--                                                  (they never filter on id).
 --
 -- Each lever was verified head-to-head against the next-best variant on
 -- this same 10M dataset before being included here; nothing in this DDL
@@ -21,14 +27,13 @@
 --     the same axis (table-type). Map trades query-time for ingest-time;
 --     pick one, not both. See scenarios/data-as-map/ if write throughput
 --     dominates.
---   - ORDER BY extension with raw `time` — standalone it gives a clean
---     win vs data-as-json (median CPU −7%), but the lever does NOT
---     compose on top of ZSTD: stacking it here regressed p50 +3% AND
---     CPU +3% vs this proposal without it (19/19 queries flat or worse),
---     and cost ~7% ingest. Likely because ZSTD already compresses the
---     time-clustered `data` column well, so the extra in-granule sort
---     adds cost without I/O reduction. See scenarios/order-by-extended-time/
---     to use it standalone (without ZSTD); not appropriate as a default.
+--   - ORDER BY extension with raw `time` — does NOT reliably beat
+--     data-as-json: one run showed a small win (median CPU −7%), a later
+--     10M run showed a small regression (+6% CPU, 18/20 queries slower).
+--     Two seed-42 runs disagreeing in direction means the extra in-granule
+--     sort is not a dependable lever (its sign is run/host/version
+--     dependent), and it costs ingest. Not worth stacking. See
+--     scenarios/order-by-extended-time/ to measure it on your own hardware.
 --
 -- Everything else (column set, PARTITION BY, ORDER BY, the minmax skip
 -- index on stored_at) is upstream OpenMeter DDL, unchanged.

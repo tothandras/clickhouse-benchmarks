@@ -6,8 +6,7 @@
 -- Captured from openmeter commit 05ee77008ac1be1bdbf7139a506afaf52df3d65d.
 --
 -- Drift check: if the upstream string-template diverges from this file,
--- update this file and bump the commit SHA above (a CI check is a future
--- change — see openspec/changes/drift-detect-openmeter-ddl/).
+-- update this file and bump the commit SHA above.
 
 CREATE TABLE IF NOT EXISTS baseline_openmeter_events (
   namespace String,

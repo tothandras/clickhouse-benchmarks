@@ -1,7 +1,7 @@
 SELECT
   tumbleStart(order_by_extended_time_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(order_by_extended_time_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  uniqExact(nullIf(toString(order_by_extended_time_events.data.value.:Float64), 'null')) AS value,
+  uniqExact(nullIf(toString(order_by_extended_time_events.data.value), 'null')) AS value,
   order_by_extended_time_events.subject AS subject
 FROM order_by_extended_time_events
 WHERE order_by_extended_time_events.namespace = {namespace:String}
