@@ -1,22 +1,4 @@
-# data-as-json-scenario Specification
-
-## Purpose
-
-Define a table-design variant of the baseline OpenMeter events scenario in which the `data` column uses ClickHouse's native `JSON` type instead of `String`, isolating the storage and query cost of native JSON columns against the otherwise-identical baseline workload.
-
-## Requirements
-
-### Requirement: Events table uses native JSON column
-
-The scenario SHALL create an `om_events` MergeTree table identical to `baseline-openmeter-scenario`'s table EXCEPT that the `data` column is declared with ClickHouse's native `JSON` type instead of `String`. All other columns, the minmax skip index on `stored_at`, `PARTITION BY toYYYYMM(time)`, and `ORDER BY (namespace, type, subject, toStartOfHour(time))` MUST be unchanged so the variant isolates only the `data` column type.
-
-#### Scenario: Schema parity except data column
-- **WHEN** `SHOW CREATE TABLE om_events` is run after `init.sql` applies
-- **THEN** every column other than `data` matches the baseline definition exactly, and `data` is declared as `JSON`
-
-#### Scenario: ClickHouse version requirement
-- **WHEN** `init.sql` is applied against a ClickHouse server older than 24.8
-- **THEN** the apply MUST fail fast with a server-side error, and the harness MUST report the failure per-scenario without affecting other scenarios
+## MODIFIED Requirements
 
 ### Requirement: Queries adapted to JSON column access
 
@@ -41,11 +23,3 @@ This requirement is extended to `unique_count_hour`, which is the last query sti
 #### Scenario: Equivalent on uniform-Float64 data, correct on mixed
 - **WHEN** `unique_count_hour` runs against uniform-`Float64` seeded data
 - **THEN** its `uniqExact` result is identical to the prior `.:Float64` form; **and WHEN** it runs against mixed-storage data, it counts the string- and bigint-stored `value` rows the `.:Float64` form would have read as NULL
-
-### Requirement: Seed reuses baseline shape
-
-The scenario SHALL be seeded by the same Go seeder (`bench/seed/`) the baseline scenario uses, with the same default cardinality (≥1 namespace, ≥2 types, ≥100 subjects, ≥3 days of time, JSON payload `{"value", "group1", "group2"}`). The seeder MUST insert the same JSON string into the `data` column; the native `JSON` type accepts well-formed JSON strings on INSERT and parses them server-side.
-
-#### Scenario: Identical cardinality to baseline
-- **WHEN** the seed completes for this scenario with the same `--rows` and `--seed` as a baseline run
-- **THEN** the row count, distinct subjects, distinct types, and time span match the baseline run exactly
