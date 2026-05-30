@@ -194,16 +194,28 @@ func buildAgentRun(rng *rand.Rand) map[string]any {
 	}
 }
 
-// eventRow is one fully-realized event ready to Append.
+// eventRow is one fully-realized event ready to Append. Both Data and DataMap
+// are populated from the same payload; the writer Appends whichever matches
+// the table's `data` column type (see resolveDataFormat).
 type eventRow struct {
-	ID         string    // user-provided idempotency id
-	Type       string    // event type / type column
-	Subject    string    // subject column
-	Time       time.Time // event time
-	Data       string    // JSON-encoded payload
-	StoreRowID string    // OpenMeter-controlled ULID
-	StoredAt   time.Time // persist time
+	ID         string            // user-provided idempotency id
+	Type       string            // event type / type column
+	Subject    string            // subject column
+	Time       time.Time         // event time
+	Data       string            // JSON-encoded payload (for `data JSON` / `data String`)
+	DataMap    map[string]string // flat key→string-value payload (for `data Map(String,String)`)
+	StoreRowID string            // OpenMeter-controlled ULID
+	StoredAt   time.Time         // persist time
 }
+
+// dataFormat names which physical encoding the writer Appends for the `data`
+// column. Detected once per Run from system.columns.
+type dataFormat int
+
+const (
+	dataFormatJSONText dataFormat = iota // `data JSON` or `data String` — Append the JSON text
+	dataFormatMap                        // `data Map(String, String)` — Append the flat map
+)
 
 // genCtx holds the precomputed, seed-independent inputs genEvent needs so they
 // are built once per Run, not per event.
@@ -220,6 +232,12 @@ type genCtx struct {
 // function of (cfg.Seed, idx): each event draws from its own PCG stream seeded
 // by (Seed, idx), so the stream is reproducible run-to-run for a given seed.
 // Draw order: time, type-pick, payload, subject, id, store_row_id.
+//
+// Both Data (JSON text) and DataMap (flat string→string) are populated from
+// the same payload, so the JSON-text and Map encodings are byte-for-byte
+// equivalent at the value level: dataMap[k] is the text-form value json.Marshal
+// would have produced for payload[k]. The writer picks one or the other based
+// on the table's data column type.
 func (g *genCtx) genEvent(idx int) eventRow {
 	rng := rand.New(rand.NewPCG(g.cfg.Seed, uint64(idx)))
 	t := g.timeStart.Add(time.Duration(rng.Int64N(g.spanNanos)))
@@ -235,9 +253,32 @@ func (g *genCtx) genEvent(idx int) eventRow {
 		Subject:    subject,
 		Time:       t,
 		Data:       string(data),
+		DataMap:    flattenToStringMap(payload),
 		StoreRowID: srid,
 		StoredAt:   t,
 	}
+}
+
+// flattenToStringMap converts a BuildData payload to a flat string→string map.
+// Each value is rendered by json.Marshal then unquoted (for strings) or kept
+// as the JSON literal (for numbers/bools), so the Map encoding stores the same
+// text the JSON path-extract would return for that field. Top-level only —
+// nested objects are not flattened (the seeder doesn't emit nested payloads,
+// asserted by TestSeedNoNestedPayloads).
+func flattenToStringMap(payload map[string]any) map[string]string {
+	out := make(map[string]string, len(payload))
+	for k, v := range payload {
+		switch x := v.(type) {
+		case string:
+			out[k] = x
+		default:
+			// Numbers, bools, etc.: render via JSON so the text matches what
+			// JSON_VALUE / typed-subcolumn access would extract from data JSON.
+			b, _ := json.Marshal(v)
+			out[k] = string(b)
+		}
+	}
+	return out
 }
 
 // Result reports what the seeder did.
@@ -262,6 +303,11 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 	}
 	if len(cfg.EventTypes) == 0 {
 		return Result{}, fmt.Errorf("seed: EventTypes must be non-empty")
+	}
+
+	format, err := resolveDataFormat(ctx, conn)
+	if err != nil {
+		return Result{}, fmt.Errorf("seed: resolve data column format: %w", err)
 	}
 	// Cumulative-weight table for O(log n) type selection, built once.
 	cumWeights := make([]int, len(cfg.EventTypes))
@@ -320,6 +366,13 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 
 		for i := 0; i < batchSize; i++ {
 			row := g.genEvent(inserted + i)
+			var dataCol any
+			switch format {
+			case dataFormatMap:
+				dataCol = row.DataMap
+			default:
+				dataCol = row.Data
+			}
 			err := batch.Append(
 				cfg.Namespace,    // namespace
 				row.ID,           // id
@@ -327,7 +380,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 				row.Subject,      // subject
 				"bench-seed",     // source
 				row.Time,         // time
-				row.Data,         // data
+				dataCol,          // data (JSON-text or Map per detected format)
 				row.StoredAt,     // ingested_at (tracks stored_at)
 				row.StoredAt,     // stored_at
 				row.StoreRowID,   // store_row_id
@@ -350,6 +403,27 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 		BatchSize:       cfg.BatchSize,
 		AsyncInsert:     cfg.AsyncInsert,
 	}, nil
+}
+
+// resolveDataFormat inspects the live om_events.data column and picks an
+// encoding for the writer to use. JSON / String → JSON text; Map(...) → flat
+// map. The scenario's init.sql is the single source of truth for the column
+// type, so adding a new physical layout means a new init.sql and no harness
+// change.
+func resolveDataFormat(ctx context.Context, conn driver.Conn) (dataFormat, error) {
+	var colType string
+	const q = `SELECT type FROM system.columns WHERE database = currentDatabase() AND table = 'om_events' AND name = 'data'`
+	if err := conn.QueryRow(ctx, q).Scan(&colType); err != nil {
+		return 0, fmt.Errorf("probe om_events.data type: %w", err)
+	}
+	switch {
+	case colType == "JSON" || colType == "String":
+		return dataFormatJSONText, nil
+	case len(colType) >= 4 && colType[:4] == "Map(":
+		return dataFormatMap, nil
+	default:
+		return 0, fmt.Errorf("unsupported om_events.data type %q (expected JSON, String, or Map(...))", colType)
+	}
 }
 
 // Subjects returns the deterministic subject pool for the given size.
