@@ -453,8 +453,8 @@ func defaultParams(_ *flags) map[string]string {
 		"subjects":  "(" + strings.Join(subjectsLit, ", ") + ")",
 		"group1":    sqlString(cfg.Group1[0]),
 		"group2":    sqlString(cfg.Group2[0]),
-		// LLM-meter dim filter (proposal-with-llm-mv scenario): a model value
-		// the seeder emits, so dim-filtered queries render against real seed data.
+		// LLM-meter dim filter (kong.llm_request model groupBy): a model value the
+		// seeder emits, so dim-filtered queries render against real seed data.
 		"model": sqlString("claude-haiku"),
 	}
 }
