@@ -117,6 +117,12 @@ func Bench(ctx context.Context, opts BenchOpts, q Query) BenchResult {
 		"--delay", "0",
 		"--query", sql,
 	}
+	if opts.Secure {
+		// Cloud / TLS clusters listen on the native-secure port (9440). Without
+		// --secure, clickhouse-benchmark attempts a plaintext handshake and the
+		// server resets the connection (NETWORK_ERROR: connection reset by peer).
+		args = append(args, "--secure")
+	}
 	if opts.Database != "" {
 		args = append(args, "--database", opts.Database)
 	}
@@ -202,6 +208,7 @@ type CPUProbe func(ctx context.Context, logComment string) (*CPUStats, error)
 type BenchOpts struct {
 	Host        string
 	Port        int
+	Secure      bool
 	Database    string
 	User        string
 	Password    string

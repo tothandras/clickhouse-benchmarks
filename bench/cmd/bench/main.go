@@ -201,6 +201,7 @@ func run(ctx context.Context, f *flags) error {
 					benchOpts := runner.BenchOpts{
 						Host:        host,
 						Port:        port,
+						Secure:      opts.TLS != nil,
 						Database:    opts.Auth.Database,
 						User:        opts.Auth.Username,
 						Password:    opts.Auth.Password,
