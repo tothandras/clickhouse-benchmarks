@@ -14,9 +14,13 @@ Seedable (synthetic data, no customer namespaces) → lives in `scenarios/`.
 - `llm_tokens_rollup` — `AggregatingMergeTree`, **dims-free** key
   `(namespace, subject, window_start)`, `tokens AggregateFunction(sum, UInt64)`.
 - `llm_tokens_mv` — `MATERIALIZED VIEW … TO llm_tokens_rollup`, fires on every
-  insert of `type='llm_request'`, `sumState(toDecimal128OrNull(toString(data.tokens), 19))`
-  (rollup column `AggregateFunction(sum, Nullable(Decimal128(19)))` — all numeric
-  aggregations use `toDecimal128OrNull` for billing-exact decimals).
+  insert of `type='llm_request'`, `sumState(toUInt64OrZero(toString(data.tokens)))`.
+  Token counts are integers, so the rollup STATE stays `AggregateFunction(sum,
+  UInt64)` (compact, exact, fast to merge). The billing-decimal cast happens at
+  QUERY time — rollup-reading queries wrap the result as
+  `toDecimal128(sumMerge(tokens), 19)` to match the base table's
+  `toDecimal128OrNull(...,19)` aggregation. (Verified exact: rollup == base ==
+  3,005,145,740; the UInt64→Decimal cast is lossless for integer counts.)
 - guarded one-time backfill (no-op when seeded after init; never overlaps the MV's
   forward coverage → no double-count).
 

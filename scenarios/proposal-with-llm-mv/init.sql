@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS llm_tokens_rollup (
   service_id       String,
   ai_plugin_id     String,
   control_plane_id String,
-  tokens           AggregateFunction(sum, Nullable(Decimal128(19)))
+  tokens           AggregateFunction(sum, UInt64)
 ) ENGINE = AggregatingMergeTree
 ORDER BY (namespace, subject, window_start,
           model, provider, http_status,
@@ -60,8 +60,10 @@ ORDER BY (namespace, subject, window_start,
 
 -- ── the LIVE materialized view: maintains the rollup on every insert ──
 -- Unqualified data.x (table-qualified JSON access is an UNKNOWN_IDENTIFIER
--- error). sumState keeps it billing-exact for integer tokens. The GROUP BY
--- includes every dim so the rollup can be filtered/grouped on any of them.
+-- error). Token counts are integers, so the rollup STATE is UInt64 (compact,
+-- exact); queries cast the sumMerge result to toDecimal128(...,19) at read time
+-- to match the base table's billing-decimal aggregation. The GROUP BY includes
+-- every dim so the rollup can be filtered/grouped on any of them.
 CREATE MATERIALIZED VIEW IF NOT EXISTS llm_tokens_mv TO llm_tokens_rollup AS
 SELECT
   namespace, subject,
@@ -73,7 +75,7 @@ SELECT
   toString(data.service_id)       AS service_id,
   toString(data.ai_plugin_id)     AS ai_plugin_id,
   toString(data.control_plane_id) AS control_plane_id,
-  sumState(toDecimal128OrNull(toString(data.tokens), 19)) AS tokens
+  sumState(toUInt64OrZero(toString(data.tokens))) AS tokens
 FROM proposal_with_llm_mv_events
 WHERE type = 'llm_request'
 GROUP BY namespace, subject, window_start,
@@ -89,7 +91,7 @@ SELECT namespace, subject, toStartOfHour(time) AS window_start,
        toString(data.model), toString(data.provider), toString(data.http_status),
        toString(data.route_id), toString(data.service_id),
        toString(data.ai_plugin_id), toString(data.control_plane_id),
-       sumState(toDecimal128OrNull(toString(data.tokens), 19))
+       sumState(toUInt64OrZero(toString(data.tokens)))
 FROM proposal_with_llm_mv_events
 WHERE type = 'llm_request'
   AND (SELECT count() FROM llm_tokens_rollup) = 0
