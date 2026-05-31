@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS llm_tokens_rollup (
   service_id       String,
   ai_plugin_id     String,
   control_plane_id String,
-  tokens           AggregateFunction(sum, UInt64)
+  tokens           AggregateFunction(sum, Nullable(Decimal128(19)))
 ) ENGINE = AggregatingMergeTree
 ORDER BY (namespace, subject, window_start,
           model, provider, http_status,
@@ -73,7 +73,7 @@ SELECT
   toString(data.service_id)       AS service_id,
   toString(data.ai_plugin_id)     AS ai_plugin_id,
   toString(data.control_plane_id) AS control_plane_id,
-  sumState(toUInt64OrZero(toString(data.tokens))) AS tokens
+  sumState(toDecimal128OrNull(toString(data.tokens), 19)) AS tokens
 FROM proposal_with_llm_mv_events
 WHERE type = 'llm_request'
 GROUP BY namespace, subject, window_start,
@@ -89,7 +89,7 @@ SELECT namespace, subject, toStartOfHour(time) AS window_start,
        toString(data.model), toString(data.provider), toString(data.http_status),
        toString(data.route_id), toString(data.service_id),
        toString(data.ai_plugin_id), toString(data.control_plane_id),
-       sumState(toUInt64OrZero(toString(data.tokens)))
+       sumState(toDecimal128OrNull(toString(data.tokens), 19))
 FROM proposal_with_llm_mv_events
 WHERE type = 'llm_request'
   AND (SELECT count() FROM llm_tokens_rollup) = 0

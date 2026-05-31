@@ -1,6 +1,6 @@
 -- BASE: dim-filtered meter query — sum tokens for one model, grouped by provider.
 -- Parses data.model/provider/tokens per row on the base table.
-SELECT toString(data.provider) AS provider, sum(toUInt64OrZero(toString(data.tokens))) AS value
+SELECT toString(data.provider) AS provider, sum(toDecimal128OrNull(toString(data.tokens), 19)) AS value
 FROM proposal_with_llm_mv_events
 WHERE type = 'llm_request'
   AND toString(data.model) = {model:String}
