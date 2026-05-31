@@ -5,13 +5,13 @@
       "source": "clickhouse/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/chdb-datastore/SKILL.md",
-      "computedHash": "1d08ca756983b607ff97d1342089e301c98fd7d94ffc9786e89cedb6ca3a1217"
+      "computedHash": "8a652156aa260f4d01a14a15ec703c4b9c7b3bafb5824fa12e65089e096b17ba"
     },
     "chdb-sql": {
       "source": "clickhouse/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/chdb-sql/SKILL.md",
-      "computedHash": "6377a15564a7ec4fc4ded081728bf1be3eac6e5b72a5a07ce5cb21e7595ff02d"
+      "computedHash": "6eece2c3948e1c6178dff37d4e83be21c261111386a63b4de4adae494f3f65d1"
     },
     "clickhouse-architecture-advisor": {
       "source": "clickhouse/agent-skills",
@@ -48,162 +48,6 @@
       "sourceType": "github",
       "skillPath": "skills/clickhousectl-local-dev/SKILL.md",
       "computedHash": "a6f5a83166eabe0888ecf04dacac4ed5c422a08b3f2cc2c0e143cc9c7d29321b"
-    },
-    "k8s-autoscaling": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-autoscaling/SKILL.md",
-      "computedHash": "08c68fdb996d610b45e9754474370fb6a2258e9f9fbda102da7959b6a3302192"
-    },
-    "k8s-backup": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-backup/SKILL.md",
-      "computedHash": "d2ebf57cb9bcf359507cbc4a65395cdf1ae9e444deb34a1372e0fd74bf9a1f95"
-    },
-    "k8s-browser": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-browser/SKILL.md",
-      "computedHash": "641546af043998351fed8728955388058831c09fc155d9350cd80454a3e52f7e"
-    },
-    "k8s-capi": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-capi/SKILL.md",
-      "computedHash": "96eb75a3a62949397d68a34198d095ce22458fc3621e61add8ea45f689bee2b8"
-    },
-    "k8s-certs": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-certs/SKILL.md",
-      "computedHash": "2e08f8fcb9c38c8fd24393e0f4f5e26968873e60e92efbcf50166ae839d37cd9"
-    },
-    "k8s-cilium": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-cilium/SKILL.md",
-      "computedHash": "0a0b8ac35175c40af9897a54fcf20d5228fe033540ccdefd28103e213cf2ce8a"
-    },
-    "k8s-cli": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-cli/SKILL.md",
-      "computedHash": "8805712b66e1f847c6a97f1eeafaccd5e7fdd3dd5ce1d30b974289bb0b3393a3"
-    },
-    "k8s-core": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-core/SKILL.md",
-      "computedHash": "e3f697e0477840ed637d1ddad663fbd7578a9108f6375dd66f73e7098bfe8a32"
-    },
-    "k8s-cost": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-cost/SKILL.md",
-      "computedHash": "84b9adf8bcf1719d4f46c2e6645290c749eec49c6290ee6154514a366f123eb7"
-    },
-    "k8s-deploy": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-deploy/SKILL.md",
-      "computedHash": "c3416ced3e14c5b95fdc85b3a66346bfcb6a909fc84b3477596c81881a689c2e"
-    },
-    "k8s-diagnostics": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-diagnostics/SKILL.md",
-      "computedHash": "b36b1df83681fbb27e59fe582bad8df91de4b138f090ab32645ae843d89edd1e"
-    },
-    "k8s-gitops": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-gitops/SKILL.md",
-      "computedHash": "fb89b6881c3adc42a288a55711aef83baf0c256ba00817c8fd8b5cbb77be137b"
-    },
-    "k8s-helm": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-helm/SKILL.md",
-      "computedHash": "09f49ba46efe26ac0aed9c3daf8650242bc7cb0703b08c7efc50976adbc68ec3"
-    },
-    "k8s-incident": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-incident/SKILL.md",
-      "computedHash": "3bdd0b04ee7c43d08103c787eb9c9b46210a682e92f44b64bdb384194353af0b"
-    },
-    "k8s-kind": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-kind/SKILL.md",
-      "computedHash": "fa0ef47f5a587d6bcc9c099c0ce250ac8b885a6c43acac368b0bd3aa06890527"
-    },
-    "k8s-kubevirt": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-kubevirt/SKILL.md",
-      "computedHash": "8bbddc9fed452aea8736d02a9d9de5cbe1c8cc11f468f8be0221a00e95a430ed"
-    },
-    "k8s-multicluster": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-multicluster/SKILL.md",
-      "computedHash": "80d67f413ea83c8bb5c6810660150db11648efcff7592be04da9fa86dedb8ef0"
-    },
-    "k8s-networking": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-networking/SKILL.md",
-      "computedHash": "63c7d338edb961447c0f7070b5b81070a1830ae934c683ec29bae081f6b27064"
-    },
-    "k8s-operations": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-operations/SKILL.md",
-      "computedHash": "4e1dc4c0788f9b80b367310e0dbc90760e17789a512f5a303ec52d44bad8a0ac"
-    },
-    "k8s-policy": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-policy/SKILL.md",
-      "computedHash": "62d41d255d78fbf2aff908ab777dfa6981cfef7d0966b65f224c4bf4f6a2368f"
-    },
-    "k8s-rollouts": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-rollouts/SKILL.md",
-      "computedHash": "32429545dea0f77b1ad9bf09a928d1b25f2521134a2344506f062672c1a553b9"
-    },
-    "k8s-security": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-security/SKILL.md",
-      "computedHash": "28c5c70db02d94eb270380b39ace190008872cc7cdacceed60a36519c5d4e136"
-    },
-    "k8s-service-mesh": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-service-mesh/SKILL.md",
-      "computedHash": "5567befc6c97ab53d0b26320d0de3169a5a842478e03e6ef4c0fd5515a621e93"
-    },
-    "k8s-storage": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-storage/SKILL.md",
-      "computedHash": "e8f55d1afc4862748e1959d509db16efa28426d1329cabd971d6a8715d307df0"
-    },
-    "k8s-troubleshoot": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-troubleshoot/SKILL.md",
-      "computedHash": "6375d167feb2c7bbd819a25269ac5c381648d49332baec0ad05a38a354f38ae5"
-    },
-    "k8s-vind": {
-      "source": "rohitg00/kubectl-mcp-server",
-      "sourceType": "github",
-      "skillPath": "kubernetes-skills/claude/k8s-vind/SKILL.md",
-      "computedHash": "69fbd1b59024e2e4384c40f158a6c6b91a1ceff1691e1f800b560b0ad3bcd86d"
     }
   }
 }
