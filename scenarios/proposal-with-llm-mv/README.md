@@ -80,6 +80,43 @@ export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9000/default"
 bin/bench --scenarios-dir scenarios --scenario proposal-with-llm-mv --rows 1000000 --iterations 5
 ```
 
+## Arbitrary (non-hour-aligned) from/to — the 3-part hybrid
+
+A time-bucketed rollup is only directly correct when from/to land on bucket
+boundaries. For ARBITRARY boundaries (real billing periods start at a signup
+instant, not on the hour), `llm_total_hybrid_arbitrary.sql` splits `[from,to)`
+into three disjoint, complete pieces and uses the rollup ONLY for whole buckets
+fully inside the range:
+
+```
+[from, from_ceil)     raw base table   (partial first hour)
+[from_ceil, to_floor) rollup sumMerge  (whole hours)
+[to_floor, to)        raw base table   (partial last hour)
+```
+
+`from_ceil`/`to_floor` are computed inline from {from}/{to} (no precomputed
+param). A self-guarding 4th UNION branch handles the interior-empty case (no
+whole bucket between the boundaries → single raw read of [from,to)). Every slice
+is `ifNull(...,0)`.
+
+**Why it's exact:** the rollup never covers a partial bucket — the partial edges
+always come from raw events, and the three ranges partition `[from,to)` exactly.
+Verified on local 10M data, hybrid == raw base to the token across edge cases:
+
+| from / to | hybrid = base |
+|-----------|--------------:|
+| mid-hour both ends | 1,686,335,313 |
+| from on boundary | 1,823,920,059 |
+| to on boundary | 862,614,378 |
+| same hour (interior empty → fallback) | 21,167,933 |
+| spans one boundary | 41,692,593 |
+| both aligned, 2h interior | 82,795,526 |
+
+**Measured (10M, --iterations 10):** `llm_total_hybrid_arbitrary` 16 ms p50 /
+166 ms CPU vs raw base 27 ms / 427 ms — ~1.7× faster, ~2.6× lower CPU. (Slower
+than the aligned `llm_total_rollup` at 8 ms because the two raw partial-hour
+tails still scan the base table; that's the cost of arbitrary boundaries.)
+
 ## Scope / constraint note
 
 This is the **sanctioned exception** to the "no per-meter MV fan-out" rule. That
