@@ -34,3 +34,10 @@ __pycache__/
 
 # claude code runtime state
 .claude/scheduled_tasks.lock
+
+# local secrets — remote ClickHouse cluster credentials
+.env
+.env.local
+
+# generated prod benchmark queries (embed real customer org/subject IDs)
+scenarios-prod/
