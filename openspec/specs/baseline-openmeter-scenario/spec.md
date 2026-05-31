@@ -26,6 +26,11 @@ The scenario SHALL provide a seed mechanism that populates `om_events` with synt
 - **WHEN** the seed emits a heterogeneous event-type mix
 - **THEN** at least one type's rows carry a numeric `value` plus `group1`/`group2`, and that type holds enough rows that the canonical `value`-aggregating meter queries still scan a large, representative population
 
+#### Scenario: Canonical Kong meters are seeded with full groupBy field sets
+- **WHEN** the seed emits the heterogeneous mix
+- **THEN** it includes events of type `kong.llm_request` carrying `tokens` (the `kong_konnect_llm_tokens` SUM meter's `$.tokens`) plus all 14 declared groupBy dimensions, and events of type `kong.api_request` (the `kong_konnect_api_request` COUNT meter) carrying all 19 declared groupBy dimensions
+- **AND** every declared groupBy field is populated (non-empty) on those rows, with bounded dimensions (e.g. `model`, `route_id`, `service_id`, `api_id`) drawn from fixed pools so grouped/rolled-up aggregations compress realistically, while genuinely high-cardinality fields (`client_ip`, `request_uri`, `request_user_agent`) remain near-unique
+
 ### Requirement: Canonical meter query coverage
 
 The scenario's `queries/` directory SHALL include at minimum one query per supported OpenMeter aggregation type (`SUM`, `COUNT`, `AVG`, `MIN`, `MAX`, `UNIQUE_COUNT`, `LATEST`), each constructed in the shape OpenMeter's `meter_query.go:108-362` emits: `tumbleStart`/`tumbleEnd` windowing, `JSON_VALUE(data, '$.value')` extraction with `nullIf`/`ifNotFinite` null-safety, filtering by namespace/type/subject and `time >= ? AND time < ?`. The directory SHALL additionally include variants exercising group-by on a JSON-extracted column and variants with/without `PREWHERE` reordering, so per-aggregation, per-window-size, and per-optimization timings can be compared.

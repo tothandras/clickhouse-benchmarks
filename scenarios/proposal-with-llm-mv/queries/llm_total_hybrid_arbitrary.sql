@@ -19,7 +19,7 @@ FROM
   -- raw head: [from, from_ceil)
   SELECT ifNull(sum(toDecimal128OrNull(toString(data.tokens), 19)), 0) AS value
   FROM proposal_with_llm_mv_events
-  WHERE type = 'llm_request'
+  WHERE type = 'kong.llm_request'
     AND time >= toDateTime({from:DateTime})
     AND time < if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR)
     AND if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR) < toStartOfHour(toDateTime({to:DateTime}))
@@ -33,7 +33,7 @@ FROM
   -- raw tail: [to_floor, to)
   SELECT ifNull(sum(toDecimal128OrNull(toString(data.tokens), 19)), 0) AS value
   FROM proposal_with_llm_mv_events
-  WHERE type = 'llm_request'
+  WHERE type = 'kong.llm_request'
     AND time >= toStartOfHour(toDateTime({to:DateTime}))
     AND time < toDateTime({to:DateTime})
     AND if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR) < toStartOfHour(toDateTime({to:DateTime}))
@@ -41,7 +41,7 @@ FROM
   -- interior-empty fallback: no whole bucket between the boundaries -> single raw read
   SELECT ifNull(sum(toDecimal128OrNull(toString(data.tokens), 19)), 0) AS value
   FROM proposal_with_llm_mv_events
-  WHERE type = 'llm_request'
+  WHERE type = 'kong.llm_request'
     AND time >= toDateTime({from:DateTime}) AND time < toDateTime({to:DateTime})
     AND NOT (if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR) < toStartOfHour(toDateTime({to:DateTime})))
 );

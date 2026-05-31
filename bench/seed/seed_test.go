@@ -211,12 +211,12 @@ func TestSeedHeterogeneousPayloads(t *testing.T) {
 	if _, ok := base["value"]; !ok {
 		t.Error("api_request payload missing value")
 	}
-	llm := samples["llm_request"]
+	llm := samples["kong.llm_request"]
 	if _, ok := llm["value"]; ok {
-		t.Error("llm_request payload should not carry baseline value")
+		t.Error("kong.llm_request payload should not carry baseline value")
 	}
 	if _, ok := llm["tokens"]; !ok {
-		t.Error("llm_request payload missing tokens")
+		t.Error("kong.llm_request payload missing tokens")
 	}
 	// Numeric fields must be JSON strings (toDecimal128OrNull fidelity).
 	if _, isStr := llm["tokens"].(string); !isStr {

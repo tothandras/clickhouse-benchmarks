@@ -6,7 +6,7 @@ SELECT
   JSON_VALUE(baseline_openmeter_events.data, '$.route_name') AS route
 FROM baseline_openmeter_events
 WHERE baseline_openmeter_events.namespace = {namespace:String}
-  AND baseline_openmeter_events.type = 'kong_api_request'
+  AND baseline_openmeter_events.type = 'kong.api_request'
   AND baseline_openmeter_events.subject IN {subjects:Array(String)}
   AND baseline_openmeter_events.time >= {from:DateTime}
   AND baseline_openmeter_events.time < {to:DateTime}

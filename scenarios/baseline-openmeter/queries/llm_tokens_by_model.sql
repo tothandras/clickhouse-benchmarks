@@ -6,7 +6,7 @@ SELECT
   JSON_VALUE(baseline_openmeter_events.data, '$.provider') AS provider
 FROM baseline_openmeter_events
 WHERE baseline_openmeter_events.namespace = {namespace:String}
-  AND baseline_openmeter_events.type = 'llm_request'
+  AND baseline_openmeter_events.type = 'kong.llm_request'
   AND baseline_openmeter_events.subject IN {subjects:Array(String)}
   AND baseline_openmeter_events.time >= {from:DateTime}
   AND baseline_openmeter_events.time < {to:DateTime}

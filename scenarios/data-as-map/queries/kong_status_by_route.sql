@@ -6,7 +6,7 @@ SELECT
   data_as_map_events.data['route_name'] AS route
 FROM data_as_map_events
 WHERE data_as_map_events.namespace = {namespace:String}
-  AND data_as_map_events.type = 'kong_api_request'
+  AND data_as_map_events.type = 'kong.api_request'
   AND data_as_map_events.subject IN {subjects:Array(String)}
   AND data_as_map_events.time >= {from:DateTime}
   AND data_as_map_events.time < {to:DateTime}

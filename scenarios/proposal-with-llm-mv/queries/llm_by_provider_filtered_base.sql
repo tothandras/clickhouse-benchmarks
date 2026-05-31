@@ -2,7 +2,7 @@
 -- Parses data.model/provider/tokens per row on the base table.
 SELECT toString(data.provider) AS provider, sum(toDecimal128OrNull(toString(data.tokens), 19)) AS value
 FROM proposal_with_llm_mv_events
-WHERE type = 'llm_request'
+WHERE type = 'kong.llm_request'
   AND toString(data.model) = {model:String}
   AND time >= {from:DateTime} AND time < {to:DateTime}
 GROUP BY provider

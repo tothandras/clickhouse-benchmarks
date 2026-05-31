@@ -8,9 +8,10 @@
 // To model real OpenMeter usage, where the data field is user-controlled and
 // differs per event type, the seeder emits a weighted mix of heterogeneous
 // event types (see DefaultConfig): a dominant baseline "api_request" carrying
-// {value, group1, group2} (which the canonical meter queries read), plus
-// kong_api_request, llm_request, workload, and agent_run types that each carry
-// their own distinct field-set. Numeric payload fields are emitted as JSON
+// {value, group1, group2} (which the agg-type sweep reads), plus the canonical
+// Kong meters kong.api_request (COUNT, 19 groupBy dims) and kong.llm_request
+// (SUM $.tokens, 14 groupBy dims), and workload / agent_run types that each
+// carry their own distinct field-set. Numeric payload fields are emitted as JSON
 // strings (e.g. "tokens":"1") to match real producers, so queries extract them
 // with toDecimal128OrNull over the path's stringified form (exact billing,
 // any JSON-stored type).
@@ -83,14 +84,18 @@ func DefaultConfig() Config {
 	group2 := []string{"free", "pro", "enterprise"}
 	return Config{
 		Namespace: "default",
-		Types:     []string{"api_request", "kong_api_request", "llm_request", "workload", "agent_run"},
+		Types:     []string{"api_request", "kong.api_request", "kong.llm_request", "workload", "agent_run"},
 		Subjects:  100,
 		Group1:    group1,
 		Group2:    group2,
 		EventTypes: []EventType{
+			// Generic baseline carrying {value, group1, group2} — drives the
+			// synthetic aggregation-type sweep (SUM/AVG/MIN/MAX/…) on $.value.
 			{Name: "api_request", Weight: 50, BuildData: buildBaseline(group1, group2, false)},
-			{Name: "kong_api_request", Weight: 25, BuildData: buildKongAPIRequest},
-			{Name: "llm_request", Weight: 15, BuildData: buildLLMRequest},
+			// Canonical Kong meters (key kong_konnect_api_request / _llm_tokens),
+			// full declared groupBy field sets, dotted eventType names.
+			{Name: "kong.api_request", Weight: 25, BuildData: buildKongAPIRequest},
+			{Name: "kong.llm_request", Weight: 15, BuildData: buildLLMRequest},
 			{Name: "workload", Weight: 7, BuildData: buildWorkload},
 			{Name: "agent_run", Weight: 3, BuildData: buildAgentRun},
 		},
@@ -121,6 +126,40 @@ func pick(rng *rand.Rand, vs []string) string { return vs[rng.IntN(len(vs))] }
 // hex16 returns a random 16-hex-digit id (one rng draw). Used for the
 // user-provided `id` column: arbitrary, format-free, no time correlation.
 func hex16(rng *rand.Rand) string { return fmt.Sprintf("%016x", rng.Uint64()) }
+
+// boundedID picks a hex16 id from a fixed pool of n, so a dimension is realistic
+// (looks like an opaque id) but BOUNDED in cardinality — the way real Kong
+// route/service/plugin/api ids are (a namespace has a handful, not one per
+// event). Generating ids per-event instead would collapse every grouped/rollup
+// benchmark to ~1× (the cardinality artifact we measured). The pool is derived
+// deterministically from the seed rng's first values via a fixed sub-rng so it's
+// stable across the run.
+func boundedID(rng *rand.Rand, pool []string) string { return pool[rng.IntN(len(pool))] }
+
+// idPool builds a fixed pool of n deterministic hex16 ids from a dedicated rng
+// seeded by `salt`, so pools are stable and independent of event-stream rng draws.
+func idPool(salt uint64, n int) []string {
+	r := rand.New(rand.NewPCG(salt, 0x9e3779b97f4a7c15))
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%016x", r.Uint64())
+	}
+	return out
+}
+
+// Bounded id pools for the Kong meters' dimensions (cardinality chosen to model
+// a multi-tenant gateway: a few control planes, dozens of routes/services, etc.).
+var (
+	cpPool      = idPool(1, 8)    // control planes
+	routePool   = idPool(2, 60)   // routes
+	servicePool = idPool(3, 40)   // services
+	pluginPool  = idPool(4, 12)   // ai plugins
+	apiPool     = idPool(5, 30)   // apis
+	apiProdPool = idPool(6, 20)   // api products
+	apiVerPool  = idPool(7, 40)   // api product versions
+	appPool     = idPool(8, 50)   // applications
+	portalPool  = idPool(9, 6)    // portals
+)
 
 // rngReader adapts a math/rand/v2 source to io.Reader so ULID entropy is
 // drawn from the seeder's deterministic stream (reproducible across runs).
@@ -178,36 +217,56 @@ func buildBaseline(group1, group2 []string, mixedStorage bool) func(rng *rand.Ra
 
 // Heterogeneous payloads. Numeric fields are emitted as JSON strings to match
 // real OpenMeter producers, so queries must parse them via toDecimal128OrNull.
+// buildKongAPIRequest emits the kong.api_request meter's full 19-dim groupBy set
+// (key kong_konnect_api_request, COUNT — no valueProperty). Bounded dims come
+// from fixed id pools; client_ip / request_uri / request_user_agent are kept
+// genuinely high-cardinality (per-event), matching real API-gateway traffic.
 func buildKongAPIRequest(rng *rand.Rand) map[string]any {
 	statuses := []string{"200", "200", "200", "201", "400", "404", "500"} // skewed to 200
 	return map[string]any{
-		"request_host":         pick(rng, []string{"localhost", "api.example.com", "gw.internal"}),
-		"request_method":       pick(rng, []string{"GET", "POST", "PUT", "DELETE"}),
-		"request_uri":          pick(rng, []string{"/llm", "/v1/chat", "/health", "/metrics"}),
-		"response_http_status": pick(rng, statuses),
-		"route_name":           pick(rng, []string{"llm-route", "chat-route", "health-route"}),
-		"client_ip":            fmt.Sprintf("172.66.%d.%d", rng.IntN(256), rng.IntN(256)),
-		"upstream_status":      pick(rng, statuses),
-		"route_id":             hex16(rng),
-		"control_plane_id":     hex16(rng),
-		"service_id":           hex16(rng),
-		"service_name":         pick(rng, []string{"ai-service", "auth-service", "billing-service"}),
-		"service_port":         pick(rng, []string{"80", "443", "8080"}),
-		"service_protocol":     pick(rng, []string{"http", "https"}),
+		"api_id":                 boundedID(rng, apiPool),
+		"api_product_id":         boundedID(rng, apiProdPool),
+		"api_product_version_id": boundedID(rng, apiVerPool),
+		"application_id":         boundedID(rng, appPool),
+		"client_ip":              fmt.Sprintf("%d.%d.%d.%d", rng.IntN(256), rng.IntN(256), rng.IntN(256), rng.IntN(256)), // high-card
+		"control_plane_id":       boundedID(rng, cpPool),
+		"portal_id":              boundedID(rng, portalPool),
+		"request_host":           pick(rng, []string{"localhost", "api.example.com", "gw.internal", "edge.kong"}),
+		"request_method":         pick(rng, []string{"GET", "POST", "PUT", "DELETE", "PATCH"}),
+		"request_uri":            fmt.Sprintf("/v1/%s/%d", pick(rng, []string{"chat", "llm", "users", "orders", "search"}), rng.IntN(10000)), // high-card
+		"request_user_agent":     pick(rng, []string{"curl/8.4", "Mozilla/5.0", "PostmanRuntime/7.36", "python-requests/2.31", "Go-http-client/2.0", "okhttp/4.12"}),
+		"response_http_status":   pick(rng, statuses),
+		"route_id":               boundedID(rng, routePool),
+		"route_name":             pick(rng, []string{"llm-route", "chat-route", "health-route", "orders-route", "search-route"}),
+		"service_id":             boundedID(rng, servicePool),
+		"service_name":           pick(rng, []string{"ai-service", "auth-service", "billing-service", "orders-service"}),
+		"service_port":           pick(rng, []string{"80", "443", "8080"}),
+		"service_protocol":       pick(rng, []string{"http", "https"}),
+		"upstream_status":        pick(rng, statuses),
 	}
 }
 
+// buildLLMRequest emits the kong.llm_request meter's value (tokens) plus its
+// full 14-dim groupBy set (key kong_konnect_llm_tokens, SUM $.tokens). All dims
+// are bounded (a gateway has finite models/providers/plugins/routes), so grouped
+// and rolled-up token aggregations compress realistically.
 func buildLLMRequest(rng *rand.Rand) map[string]any {
 	return map[string]any{
-		"tokens":           fmt.Sprintf("%d", 1+rng.IntN(4000)),
-		"http_status":      pick(rng, []string{"200", "200", "429", "500"}),
-		"model":            pick(rng, []string{"gpt-5-nano", "gpt-5", "claude-opus", "claude-haiku"}),
-		"provider":         pick(rng, []string{"openai", "anthropic", "google"}),
-		"type":             pick(rng, []string{"input", "output"}),
-		"control_plane_id": hex16(rng),
-		"service_id":       hex16(rng),
-		"route_id":         hex16(rng),
-		"ai_plugin_id":     hex16(rng),
+		"tokens":                 fmt.Sprintf("%d", 1+rng.IntN(4000)),
+		"ai_plugin_id":           boundedID(rng, pluginPool),
+		"ai_plugin_name":         pick(rng, []string{"ai-proxy", "ai-prompt-guard", "ai-rate-limit", "ai-semantic-cache"}),
+		"api_id":                 boundedID(rng, apiPool),
+		"api_product_id":         boundedID(rng, apiProdPool),
+		"api_product_version_id": boundedID(rng, apiVerPool),
+		"application_id":         boundedID(rng, appPool),
+		"cache_status":           pick(rng, []string{"Hit", "Miss", "Bypass", ""}),
+		"consumer_id":            boundedID(rng, appPool), // ~per-application consumer; bounded
+		"control_plane_id":       boundedID(rng, cpPool),
+		"http_status":            pick(rng, []string{"200", "200", "200", "429", "500"}),
+		"model":                  pick(rng, []string{"gpt-5-nano", "gpt-5", "claude-opus", "claude-haiku", "gemini-2.5"}),
+		"provider":               pick(rng, []string{"openai", "anthropic", "google"}),
+		"route_id":               boundedID(rng, routePool),
+		"service_id":             boundedID(rng, servicePool),
 	}
 }
 

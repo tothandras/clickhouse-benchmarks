@@ -6,7 +6,7 @@ SELECT
   toString(proposal_events.data.provider.:String) AS provider
 FROM proposal_events
 WHERE proposal_events.namespace = {namespace:String}
-  AND proposal_events.type = 'llm_request'
+  AND proposal_events.type = 'kong.llm_request'
   AND proposal_events.subject IN {subjects:Array(String)}
   AND proposal_events.time >= {from:DateTime}
   AND proposal_events.time < {to:DateTime}
