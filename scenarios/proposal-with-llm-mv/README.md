@@ -31,17 +31,45 @@ Verified on local CH:
 - **Full seeded run (1M rows, 10K/batch → 100s of MV firings):** rollup total ==
   base total == **300,040,901 tokens**, exact.
 
-## Measured (local, seeded 1M rows, --iterations 5)
+## Dims-full rollup (groups by all the meter's groupBy dims)
+
+The rollup carries every meter `groupBy` dimension as a typed column
+(`model`, `provider`, `http_status`, `route_id`, `service_id`, `ai_plugin_id`,
+`control_plane_id`) so meter queries can **filter/group on them**. ORDER BY leads
+with the always-present filter prefix `(namespace, subject, window_start)` then
+dims low-card-first.
+
+**Key point: the dim-filtered win does NOT depend on row compression.** Including
+the high-card ID dims means the rollup is ~1 row/event on this seed (1× rows —
+the synthetic route_id/service_id/ai_plugin_id are unique-per-event). It still
+beats the base table because the rollup has typed dim columns (no per-row JSON
+parse) and carries no `data` blob (far narrower rows scanned). Real Kong IDs are
+bounded, so prod row-compression will be much better than 1×.
+
+## Measured (local, seeded 10M rows, --iterations 10)
 
 | query | p50 | cpu_p50 | QPS |
 |-------|----:|--------:|----:|
-| `api_request_count_base` (base, COUNT, no rollup) | 11.0 ms | 96.5 ms | 28.8 |
-| `llm_total_base` (base, raw SUM tokens) | 14.0 ms | 201.5 ms | 23.4 |
-| `llm_total_rollup` (MV-served) | **6.0 ms** | **29.2 ms** | **32.8** |
+| `api_request_count_base` (base, COUNT, no rollup) | 9.0 ms | 117.9 ms | 46.4 |
+| `llm_total_base` (base, raw SUM tokens) | 23.0 ms | 353.0 ms | 25.9 |
+| `llm_total_rollup` (MV-served total) | **9.0 ms** | **109.1 ms** | 42.2 |
+| `llm_by_provider_filtered_base` (base, WHERE model= GROUP BY provider) | 26.0 ms | 414.6 ms | 24.0 |
+| `llm_by_provider_filtered_rollup` (MV-served, dim-filtered) | **8.0 ms** | **87.6 ms** | 43.6 |
 
-Rollup-served vs raw base for the same meter: **~2.3× faster p50, ~7× lower CPU.**
-Compression at seed density: 150K llm events → 7.3K rollup rows (~20×). (Prod
-density is far higher — measured 1212× hourly on real `completion` data.)
+- **Dim-filtered query** (the use case the dims exist for): rollup **~3× faster
+  p50, ~4.7× lower CPU** than base — even at 1× row compression.
+- **Total query**: rollup ~2.5× faster, ~3× lower CPU. (Less than the dims-free
+  rollup's gap, because dims-full carries 1× rows; for pure totals a dims-free
+  rollup is better — the real answer may be both.)
+
+**Correctness @ 10M (1000+ MV firings, 10K/batch), exact:**
+- total: rollup re-agg == base == **3,005,145,740 tokens**.
+- dim-filtered (model=claude-haiku by provider): rollup == base to the token
+  (anthropic 249,667,755 / google 249,359,738 / openai 248,845,286).
+
+Dims-full rollup rows at this seed: 1,501,796 == llm event count (1×, seed's
+unique IDs). The CPU/latency win comes from typed columns + no JSON parse, not
+compression.
 
 ## Run
 
