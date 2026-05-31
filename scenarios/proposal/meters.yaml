@@ -1,0 +1,69 @@
+# Canonical OpenMeter meter definitions for the two known-schema Kong meters.
+#
+# These are the SOURCE OF TRUTH that proposal/init.sql implements: each meter's
+# materialized-view rollup pre-aggregates exactly this `aggregation` over this
+# `valueProperty` (where present), keyed so the declared `groupBy` paths are
+# queryable. The base `proposal_events` table stays meter-agnostic for all other
+# (unknown-schema) meters; these two are the sanctioned per-meter rollups.
+#
+# Mapping to the rollups (see init.sql):
+#   kong_konnect_llm_tokens  -> proposal_llm_tokens_rollup  (DIMS-FULL: all 14
+#       groupBy dims as typed columns + sumState($.tokens); serves total-period
+#       SUM and dim-filtered queries).
+#   kong_konnect_api_request -> proposal_api_request_rollup (DIMS-FREE:
+#       countState keyed by namespace/subject/window; serves total-period COUNT.
+#       Its 19 groupBy dims are ~unique per event so a dims-full rollup would not
+#       compress — dim-filtered api queries run on the base table.)
+#
+# Total-period reads use the 3-part hybrid (raw head + rollup interior + raw
+# tail) so they are billing-exact for arbitrary, non-hour-aligned from/to.
+
+meters:
+  - description: "Number of AI Gateway LLM tokens"
+    name: "AI Gateway Tokens"
+    key: "kong_konnect_llm_tokens"
+    aggregation: "SUM"
+    eventType: "kong.llm_request"
+    valueProperty: "$.tokens"
+    groupBy:
+      ai_plugin_id: "$.ai_plugin_id"
+      ai_plugin_name: "$.ai_plugin_name"
+      api_id: "$.api_id"
+      api_product_id: "$.api_product_id"
+      api_product_version_id: "$.api_product_version_id"
+      application_id: "$.application_id"
+      cache_status: "$.cache_status"
+      consumer_id: "$.consumer_id"
+      control_plane_id: "$.control_plane_id"
+      http_status: "$.http_status"
+      model: "$.model"
+      provider: "$.provider"
+      route_id: "$.route_id"
+      service_id: "$.service_id"
+    schemaVersion: 1
+
+  - description: "Number of API Gateway requests"
+    name: "API Gateway Requests"
+    key: "kong_konnect_api_request"
+    aggregation: "COUNT"
+    eventType: "kong.api_request"
+    groupBy:
+      api_id: "$.api_id"
+      api_product_id: "$.api_product_id"
+      api_product_version_id: "$.api_product_version_id"
+      application_id: "$.application_id"
+      client_ip: "$.client_ip"
+      control_plane_id: "$.control_plane_id"
+      portal_id: "$.portal_id"
+      request_host: "$.request_host"
+      request_method: "$.request_method"
+      request_uri: "$.request_uri"
+      request_user_agent: "$.request_user_agent"
+      response_http_status: "$.response_http_status"
+      route_id: "$.route_id"
+      route_name: "$.route_name"
+      service_id: "$.service_id"
+      service_name: "$.service_name"
+      service_port: "$.service_port"
+      service_protocol: "$.service_protocol"
+      upstream_status: "$.upstream_status"
