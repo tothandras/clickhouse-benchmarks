@@ -9,4 +9,5 @@ WHERE baseline_openmeter_events.namespace = {namespace:String}
   AND baseline_openmeter_events.subject IN {subjects:Array(String)}
   AND baseline_openmeter_events.time >= {from:DateTime}
   AND baseline_openmeter_events.time < {to:DateTime}
-GROUP BY subject;
+GROUP BY subject
+SETTINGS optimize_move_to_prewhere = 1, allow_reorder_prewhere_conditions = 1;

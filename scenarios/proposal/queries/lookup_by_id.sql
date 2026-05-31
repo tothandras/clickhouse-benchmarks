@@ -41,4 +41,5 @@ WHERE proposal_events.namespace = {namespace:String}
     WHERE namespace = {namespace:String}
     ORDER BY namespace, type, subject, time
     LIMIT 1 OFFSET 100000
-  );
+  )
+SETTINGS optimize_move_to_prewhere = 1, allow_reorder_prewhere_conditions = 1;

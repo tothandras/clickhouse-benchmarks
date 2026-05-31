@@ -9,4 +9,5 @@ WHERE data_as_map_events.namespace = {namespace:String}
   AND data_as_map_events.subject IN {subjects:Array(String)}
   AND data_as_map_events.time >= {from:DateTime}
   AND data_as_map_events.time < {to:DateTime}
-GROUP BY subject;
+GROUP BY subject
+SETTINGS optimize_move_to_prewhere = 1, allow_reorder_prewhere_conditions = 1;

@@ -465,7 +465,7 @@ func sqlString(s string) string {
 
 // scenarioTable derives the table name for a scenario by replacing `-` with
 // `_` and appending `_events`. The scenario directory name is the single
-// source of truth: scenarios/data-as-json/ → data_as_json_events. Each
+// source of truth: scenarios/proposal/ → proposal_events. Each
 // scenario uses its own table so scenarios coexist without clobbering.
 func scenarioTable(name string) string {
 	return strings.ReplaceAll(name, "-", "_") + "_events"

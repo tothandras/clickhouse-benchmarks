@@ -17,6 +17,16 @@
 --                                                  1223 → 17 granules (≈72×).
 --                                                  Inert for the meter queries
 --                                                  (they never filter on id).
+--   4. PREWHERE on group-by    (query-level, not DDL): the meter queries set
+--                                                  optimize_move_to_prewhere=1 +
+--                                                  allow_reorder_prewhere_conditions=1.
+--                                                  Measured on the prod-data copy
+--                                                  (4.59B rows): −38% to −46% p50 on
+--                                                  selective group-by queries that
+--                                                  filter a JSON-extracted field;
+--                                                  ~neutral on plain aggregations.
+--                                                  See the *_no_prewhere query
+--                                                  variants to measure the lever.
 --
 -- Each lever was verified head-to-head against the next-best variant on
 -- this same 10M dataset before being included here; nothing in this DDL
@@ -27,13 +37,15 @@
 --     the same axis (table-type). Map trades query-time for ingest-time;
 --     pick one, not both. See scenarios/data-as-map/ if write throughput
 --     dominates.
---   - ORDER BY extension with raw `time` — does NOT reliably beat
---     data-as-json: one run showed a small win (median CPU −7%), a later
---     10M run showed a small regression (+6% CPU, 18/20 queries slower).
---     Two seed-42 runs disagreeing in direction means the extra in-granule
---     sort is not a dependable lever (its sign is run/host/version
---     dependent), and it costs ingest. Not worth stacking. See
---     scenarios/order-by-extended-time/ to measure it on your own hardware.
+--   - ORDER BY extension with raw `time` (appending `time` to the sort key,
+--     i.e. ORDER BY (namespace, type, subject, toStartOfHour(time), time)) —
+--     does NOT reliably beat data-as-json: one run showed a small win
+--     (median CPU −7%), a later 10M run showed a small regression (+6% CPU,
+--     18/20 queries slower). Two seed-42 runs disagreeing in direction means
+--     the extra in-granule sort is not a dependable lever (its sign is
+--     run/host/version dependent), and it costs ingest. Not worth stacking.
+--     The standalone scenario for this was removed; re-add the `, time`
+--     suffix to a copy of this table to measure it on your own hardware.
 --
 -- Everything else (column set, PARTITION BY, ORDER BY, the minmax skip
 -- index on stored_at) is upstream OpenMeter DDL, unchanged.

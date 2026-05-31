@@ -11,4 +11,5 @@ WHERE data_as_map_events.namespace = {namespace:String}
   AND data_as_map_events.time >= {from:DateTime}
   AND data_as_map_events.time < {to:DateTime}
 GROUP BY windowstart, windowend, model, provider
-ORDER BY windowstart;
+ORDER BY windowstart
+SETTINGS optimize_move_to_prewhere = 1, allow_reorder_prewhere_conditions = 1;
