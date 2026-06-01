@@ -391,9 +391,18 @@ func captureIndexPruning(ctx context.Context, conn driver.Conn, sc runner.Scenar
 // can't be built at all.
 func captureValueDigests(ctx context.Context, conn driver.Conn, sc runner.Scenario, f *flags) *runner.ValueParity {
 	params := defaultParams(f)
+	// Record the window as a readable UTC wall-clock string (params["from"]/["to"]
+	// are now Unix-second integers — TZ-independent for the SQL, but opaque in the
+	// report and the compare-gate). Derived from the same resolved TimeEnd.
+	cfg0 := seed.DefaultConfig()
+	te := cfg0.TimeEnd
+	if t, err := f.resolveTimeEnd(); err == nil {
+		te = t
+	}
+	const utcFmt = "2006-01-02 15:04:05"
 	vp := &runner.ValueParity{
-		From:    strings.Trim(params["from"], "'"),
-		To:      strings.Trim(params["to"], "'"),
+		From:    te.Add(-cfg0.TimeSpan).UTC().Format(utcFmt),
+		To:      te.UTC().Format(utcFmt),
 		TimeEnd: f.timeEnd,
 		Digests: map[string]runner.QueryDigest{},
 	}
@@ -505,7 +514,6 @@ func defaultParams(f *flags) map[string]string {
 	}
 	subjects := seed.Subjects(10)
 	from := cfg.TimeEnd.Add(-cfg.TimeSpan)
-	const chTimeFmt = "2006-01-02 15:04:05"
 
 	subjectsLit := make([]string, len(subjects))
 	for i, s := range subjects {
@@ -515,11 +523,17 @@ func defaultParams(f *flags) map[string]string {
 	return map[string]string{
 		"namespace": sqlString(cfg.Namespace),
 		"type":      sqlString(cfg.Types[0]),
-		"from":      sqlString(from.UTC().Format(chTimeFmt)),
-		"to":        sqlString(cfg.TimeEnd.UTC().Format(chTimeFmt)),
-		"subjects":  "(" + strings.Join(subjectsLit, ", ") + ")",
-		"group1":    sqlString(cfg.Group1[0]),
-		"group2":    sqlString(cfg.Group2[0]),
+		// from/to are rendered as Unix-second integers, NOT wall-clock string
+		// literals: a bare 'YYYY-MM-DD hh:mm:ss' passed to toDateTime() is parsed
+		// in the server/session timezone (e.g. Europe/Budapest), which shifts the
+		// scan window off the UTC instants the seeder wrote and silently drops the
+		// edge hours. A Unix timestamp is timezone-independent, so toDateTime({from})
+		// resolves to exactly the intended instant on any server.
+		"from":     strconv.FormatInt(from.UTC().Unix(), 10),
+		"to":       strconv.FormatInt(cfg.TimeEnd.UTC().Unix(), 10),
+		"subjects": "(" + strings.Join(subjectsLit, ", ") + ")",
+		"group1":   sqlString(cfg.Group1[0]),
+		"group2":   sqlString(cfg.Group2[0]),
 		// LLM-meter dim filter (kong.llm_request model groupBy): a model value the
 		// seeder emits, so dim-filtered queries render against real seed data.
 		"model": sqlString("claude-haiku"),
