@@ -14,7 +14,7 @@ FROM
     AND time < if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR)
     AND if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR) < toStartOfHour(toDateTime({to:DateTime}))
   UNION ALL
-  SELECT ifNull(toDecimal128(sumMerge(tokens), 19), 0) AS value
+  SELECT ifNull(toDecimal128(sumMerge(value), 19), 0) AS value
   FROM proposal_llm_tokens_rollup
   WHERE window_start >= if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR)
     AND window_start < toStartOfHour(toDateTime({to:DateTime}))

@@ -57,6 +57,21 @@ type flags struct {
 	namespaces      int
 	mixedValue      bool
 	skipSeed        bool
+	timeEnd         string // optional RFC3339 pin for seed TimeEnd; shared across scenarios for byte-identical time windows
+}
+
+// resolveTimeEnd returns the pinned TimeEnd (if --time-end set) or the seeder
+// default. Parsed once and shared by every scenario in a run so their event
+// time windows are byte-identical (required for cross-scenario per-row parity).
+func (f *flags) resolveTimeEnd() (time.Time, error) {
+	if f.timeEnd == "" {
+		return seed.DefaultConfig().TimeEnd, nil
+	}
+	t, err := time.Parse(time.RFC3339, f.timeEnd)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse --time-end %q (want RFC3339 like 2026-06-01T00:00:00Z): %w", f.timeEnd, err)
+	}
+	return t.UTC().Truncate(time.Minute), nil
 }
 
 func newRootCmd() *cobra.Command {
@@ -85,6 +100,7 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().IntVar(&f.namespaces, "namespaces", 1, "number of namespaces to spread seeded rows across (multi-tenant table)")
 	cmd.Flags().BoolVar(&f.mixedValue, "mixed-value", false, "emit baseline `value` in mixed JSON storage (number/string/bigint) to exercise the type-agnostic correctness fix")
 	cmd.Flags().BoolVar(&f.skipSeed, "skip-seed", false, "skip seeding (run queries against existing data)")
+	cmd.Flags().StringVar(&f.timeEnd, "time-end", "", "pin seed TimeEnd (RFC3339, e.g. 2026-06-01T00:00:00Z); shared across scenarios so their event time windows are byte-identical. Default: time.Now() truncated to the minute (per-scenario).")
 	cmd.SilenceUsage = true
 	cmd.AddCommand(newCompareCmd())
 	return cmd
@@ -92,6 +108,9 @@ func newRootCmd() *cobra.Command {
 
 func run(ctx context.Context, f *flags) error {
 	if err := runner.EnsureBinary(); err != nil {
+		return err
+	}
+	if _, err := f.resolveTimeEnd(); err != nil { // fail fast on a bad --time-end
 		return err
 	}
 
@@ -418,6 +437,11 @@ func doSeed(ctx context.Context, conn driver.Conn, sc runner.Scenario, table str
 	cfg.Seed = f.rngSeed
 	cfg.Namespaces = f.namespaces
 	cfg.MixedValueStorage = f.mixedValue
+	te, err := f.resolveTimeEnd()
+	if err != nil {
+		return nil, err
+	}
+	cfg.TimeEnd = te // shared across scenarios when --time-end is set → identical time windows
 
 	fmt.Printf(" seed: %d rows (batch=%d, async=%v, namespaces=%d) ...\n",
 		cfg.Rows, cfg.BatchSize, cfg.AsyncInsert, max(f.namespaces, 1))
@@ -434,8 +458,14 @@ func doSeed(ctx context.Context, conn driver.Conn, sc runner.Scenario, table str
 // scenarios/README.md as already-rendered SQL literals (clickhouse-benchmark
 // does not support bound parameters; we substitute them ourselves). Per-scenario
 // manifests are a future change.
-func defaultParams(_ *flags) map[string]string {
+func defaultParams(f *flags) map[string]string {
 	cfg := seed.DefaultConfig()
+	// Use the same TimeEnd the seeder used so query from/to cover the seeded span
+	// exactly. With --time-end pinned this is shared across scenarios; without it,
+	// it falls back to the seeder default (run() has already validated the flag).
+	if te, err := f.resolveTimeEnd(); err == nil {
+		cfg.TimeEnd = te
+	}
 	subjects := seed.Subjects(10)
 	from := cfg.TimeEnd.Add(-cfg.TimeSpan)
 	const chTimeFmt = "2006-01-02 15:04:05"

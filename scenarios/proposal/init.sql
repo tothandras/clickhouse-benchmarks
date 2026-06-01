@@ -81,12 +81,29 @@ ORDER BY (namespace, type, subject, toStartOfHour(time));
 --     (by model/provider/route…). Token counts are integers → UInt64 sum state
 --     (compact/fast); queries cast to toDecimal128(...,19) at read time.
 --
---   • kong.api_request (COUNT): DIMS-FREE rollup — keyed only
---     (namespace, subject, window). Measured: a dims-full api rollup is ~1×
---     (its 19 dims incl. client_ip/request_uri are ~unique per event), so it
---     would be pure cost. The dominant total-period COUNT-by-subject query needs
---     no dims, and dims-free compresses 34× hourly / 625× daily. Dim-filtered
---     api queries (by route/status) stay on the base table.
+--   • kong.api_request (COUNT): DIMS-BOUNDED rollup (16 of 19 dims) — SHIPPED BUT
+--     MEASURED NOT TO PAY OFF (see the failure note below). It carries countState()
+--     keyed by namespace/subject/window + 16 typed dim columns so it CAN serve the
+--     total-period COUNT and dim-grouped api queries, but at 1.0× compression it is
+--     no better than scanning the base table. The 3 highest-card dims (client_ip,
+--     request_uri, request_user_agent) are excluded; grouped queries needing one of
+--     those still fall back to the base table (queries/kong_api_request_by_all_dims.sql).
+--
+--     ⚠ MEASURED FAILURE (20M, re-confirmed 2026-06-01 with corrected seed): this
+--     dims-bounded rollup does NOT pay off — kept as a documented negative result.
+--     5,002,087 rollup rows from 5,002,087 api_request events = **1.0× (no
+--     compression)**, ~124 MiB. Root cause: even with route_id↔route_name and
+--     service_id↔service_name now correlated 1:1 (realistic Kong data), the 8 ID
+--     dims (api_id=30, api_product_id=20, api_product_version_id=40,
+--     application_id=50, control_plane_id=8, portal_id=6, route_id=20, service_id=8)
+--     are independent, and just four of them cross-multiply to ~240,000 distinct
+--     combos — so the full 16-dim GROUP BY collapses nothing (one rollup row per
+--     event). Only 7,300 distinct (namespace, subject, hour) keys exist; the
+--     original DIMS-FREE rollup keyed on those alone (~343× at 10M) was the correct
+--     design. (Correlating id↔name was necessary for data realism but does not
+--     rescue the rollup — the verdict is unchanged on realistic data.) To restore
+--     dims-free: drop all 16 dim columns + their MV GROUP BY and key the rollup
+--     (namespace, subject, window_start) with countState() only.
 --
 -- Both total-period queries use arbitrary from/to → the 3-part hybrid (raw head
 -- + rollup interior + raw tail) is the billing-exact read; see queries/.
@@ -111,7 +128,7 @@ CREATE TABLE IF NOT EXISTS proposal_llm_tokens_rollup (
   control_plane_id        String,
   route_id                String,
   service_id              String,
-  tokens                  AggregateFunction(sum, UInt64)
+  value                   AggregateFunction(sum, UInt64)
 ) ENGINE = AggregatingMergeTree
 ORDER BY (namespace, subject, window_start,
           model, provider, http_status, cache_status, ai_plugin_name,
@@ -136,7 +153,7 @@ SELECT
   toString(data.control_plane_id)       AS control_plane_id,
   toString(data.route_id)               AS route_id,
   toString(data.service_id)             AS service_id,
-  sumState(toUInt64OrZero(toString(data.tokens))) AS tokens
+  sumState(toUInt64OrZero(toString(data.tokens))) AS value
 FROM proposal_events
 WHERE type = 'kong.llm_request'
 GROUP BY namespace, subject, window_start,
@@ -144,47 +161,109 @@ GROUP BY namespace, subject, window_start,
          ai_plugin_id, api_id, api_product_id, api_product_version_id,
          application_id, consumer_id, control_plane_id, route_id, service_id;
 
-INSERT INTO proposal_llm_tokens_rollup
-SELECT namespace, subject, toStartOfHour(time) AS window_start,
-       toString(data.model), toString(data.provider), toString(data.http_status),
-       toString(data.cache_status), toString(data.ai_plugin_name),
-       toString(data.ai_plugin_id), toString(data.api_id), toString(data.api_product_id),
-       toString(data.api_product_version_id), toString(data.application_id),
-       toString(data.consumer_id), toString(data.control_plane_id),
-       toString(data.route_id), toString(data.service_id),
-       sumState(toUInt64OrZero(toString(data.tokens)))
-FROM proposal_events
-WHERE type = 'kong.llm_request'
-  AND (SELECT count() FROM proposal_llm_tokens_rollup) = 0
-GROUP BY namespace, subject, window_start,
-         toString(data.model), toString(data.provider), toString(data.http_status),
-         toString(data.cache_status), toString(data.ai_plugin_name),
-         toString(data.ai_plugin_id), toString(data.api_id), toString(data.api_product_id),
-         toString(data.api_product_version_id), toString(data.application_id),
-         toString(data.consumer_id), toString(data.control_plane_id),
-         toString(data.route_id), toString(data.service_id);
+-- INSERT INTO proposal_llm_tokens_rollup
+-- SELECT namespace, subject, toStartOfHour(time) AS window_start,
+--        toString(data.model), toString(data.provider), toString(data.http_status),
+--        toString(data.cache_status), toString(data.ai_plugin_name),
+--        toString(data.ai_plugin_id), toString(data.api_id), toString(data.api_product_id),
+--        toString(data.api_product_version_id), toString(data.application_id),
+--        toString(data.consumer_id), toString(data.control_plane_id),
+--        toString(data.route_id), toString(data.service_id),
+--        sumState(toUInt64OrZero(toString(data.tokens)))
+-- FROM proposal_events
+-- WHERE type = 'kong.llm_request'
+--   AND (SELECT count() FROM proposal_llm_tokens_rollup) = 0
+-- GROUP BY namespace, subject, window_start,
+--          toString(data.model), toString(data.provider), toString(data.http_status),
+--          toString(data.cache_status), toString(data.ai_plugin_name),
+--          toString(data.ai_plugin_id), toString(data.api_id), toString(data.api_product_id),
+--          toString(data.api_product_version_id), toString(data.application_id),
+--          toString(data.consumer_id), toString(data.control_plane_id),
+--          toString(data.route_id), toString(data.service_id);
 
--- ── api: dims-free rollup (COUNT) ──
+-- ── api: dims-bounded rollup (COUNT, 16 dims) — MEASURED 1.0× / NO COMPRESSION ──
+-- Carries 16 of the 19 kong_konnect_api_request groupBy dims as typed columns.
+-- EXCLUDED (high-card, ~unique per event): client_ip, request_uri, request_user_agent.
+-- ⚠ This design does NOT compress (one rollup row per event at 20M) — kept as a
+-- documented negative result; the dims-free rollup is the correct design. See the
+-- "MEASURED FAILURE" note in the header comment above for full numbers + how to revert.
 CREATE TABLE IF NOT EXISTS proposal_api_request_rollup (
-  namespace    String,
-  subject      String,
-  window_start DateTime,
-  cnt          AggregateFunction(count)
+  namespace               String,
+  subject                 String,
+  window_start            DateTime,
+  api_id                  String,
+  api_product_id          String,
+  api_product_version_id  String,
+  application_id          String,
+  control_plane_id        String,
+  portal_id               String,
+  request_host            LowCardinality(String),
+  request_method          LowCardinality(String),
+  response_http_status    LowCardinality(String),
+  route_id                String,
+  route_name              LowCardinality(String),
+  service_id              String,
+  service_name            LowCardinality(String),
+  service_port            LowCardinality(String),
+  service_protocol        LowCardinality(String),
+  upstream_status         LowCardinality(String),
+  value                   AggregateFunction(count)
 ) ENGINE = AggregatingMergeTree
-ORDER BY (namespace, subject, window_start);
+ORDER BY (namespace, subject, window_start,
+          response_http_status, route_name, service_name, request_method,
+          request_host, service_port, service_protocol, upstream_status,
+          api_id, api_product_id, api_product_version_id, application_id,
+          control_plane_id, portal_id, route_id, service_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS proposal_api_request_mv TO proposal_api_request_rollup AS
 SELECT
   namespace, subject,
   toStartOfHour(time) AS window_start,
-  countState() AS cnt
+  toString(data.api_id)                 AS api_id,
+  toString(data.api_product_id)         AS api_product_id,
+  toString(data.api_product_version_id) AS api_product_version_id,
+  toString(data.application_id)         AS application_id,
+  toString(data.control_plane_id)       AS control_plane_id,
+  toString(data.portal_id)             AS portal_id,
+  toString(data.request_host)           AS request_host,
+  toString(data.request_method)         AS request_method,
+  toString(data.response_http_status)   AS response_http_status,
+  toString(data.route_id)               AS route_id,
+  toString(data.route_name)             AS route_name,
+  toString(data.service_id)             AS service_id,
+  toString(data.service_name)           AS service_name,
+  toString(data.service_port)           AS service_port,
+  toString(data.service_protocol)       AS service_protocol,
+  toString(data.upstream_status)        AS upstream_status,
+  countState() AS value
 FROM proposal_events
 WHERE type = 'kong.api_request'
-GROUP BY namespace, subject, window_start;
+GROUP BY namespace, subject, window_start,
+         api_id, api_product_id, api_product_version_id, application_id,
+         control_plane_id, portal_id, request_host, request_method,
+         response_http_status, route_id, route_name, service_id, service_name,
+         service_port, service_protocol, upstream_status;
 
-INSERT INTO proposal_api_request_rollup
-SELECT namespace, subject, toStartOfHour(time) AS window_start, countState()
-FROM proposal_events
-WHERE type = 'kong.api_request'
-  AND (SELECT count() FROM proposal_api_request_rollup) = 0
-GROUP BY namespace, subject, window_start;
+-- INSERT INTO proposal_api_request_rollup
+-- SELECT namespace, subject, toStartOfHour(time) AS window_start,
+--        toString(data.api_id), toString(data.api_product_id),
+--        toString(data.api_product_version_id), toString(data.application_id),
+--        toString(data.control_plane_id), toString(data.portal_id),
+--        toString(data.request_host), toString(data.request_method),
+--        toString(data.response_http_status), toString(data.route_id),
+--        toString(data.route_name), toString(data.service_id),
+--        toString(data.service_name), toString(data.service_port),
+--        toString(data.service_protocol), toString(data.upstream_status),
+--        countState()
+-- FROM proposal_events
+-- WHERE type = 'kong.api_request'
+--   AND (SELECT count() FROM proposal_api_request_rollup) = 0
+-- GROUP BY namespace, subject, window_start,
+--          toString(data.api_id), toString(data.api_product_id),
+--          toString(data.api_product_version_id), toString(data.application_id),
+--          toString(data.control_plane_id), toString(data.portal_id),
+--          toString(data.request_host), toString(data.request_method),
+--          toString(data.response_http_status), toString(data.route_id),
+--          toString(data.route_name), toString(data.service_id),
+--          toString(data.service_name), toString(data.service_port),
+--          toString(data.service_protocol), toString(data.upstream_status);
