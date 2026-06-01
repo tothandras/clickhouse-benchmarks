@@ -73,49 +73,59 @@ Two scenarios:
 - **`proposal`** — `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id`, queried via native subcolumns.
 
 Both tables hold the same events over the same window
-(`2026-05-29 02:00:00 → 2026-06-01 01:59:59`).
+(`2026-05-29 00:00:00 → 2026-06-01 00:00:00`).
 
 ### Query performance — baseline vs proposal
 
 CPU is `OSCPUVirtualTimeMicroseconds` p50 (summed across query threads); p50 is
-wall-clock. **Proposal is faster on every meter query** — median **−43% p50 /
-−46% CPU** across the 22 shared queries.
+wall-clock. **Proposal is faster on every query that reads a `data` path** —
+median **−42% p50 / −44.5% CPU** across the 30 shared queries.
 
 | query | base p50 | prop p50 | base CPU | prop CPU | CPU Δ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `kong_status_by_route` | 87 ms | 15 ms | 1475 ms | 186 ms | **−87%** |
-| `kong_llm_tokens_total` | 99 ms | 22 ms | 1713 ms | 339 ms | **−80%** |
-| `llm_tokens_by_model` | 68 ms | 17 ms | 1128 ms | 226 ms | **−80%** |
-| `sum_hour_group1_group2_no_prewhere` | 72 ms | 27 ms | 1193 ms | 394 ms | −67% |
-| `sum_hour_group1_group2` | 69 ms | 29 ms | 1150 ms | 437 ms | −62% |
-| `sum_hour_group1` | 59 ms | 29 ms | 988 ms | 437 ms | −56% |
-| `workload_seconds_by_region` | 17 ms | 10 ms | 241 ms | 106 ms | −56% |
-| `sum_hour_group1_no_prewhere` | 61 ms | 30 ms | 1008 ms | 458 ms | −55% |
-| `sum_no_window` | 68 ms | 37 ms | 1159 ms | 591 ms | −49% |
-| `sum_month` / `max` / `min` / `sum_day` / `avg_hour` / `sum_hour` / `sum_hour_tz` | ~70 ms | ~40 ms | ~1180 ms | ~645 ms | ≈−45% |
-| `sum_minute` | 83 ms | 52 ms | 1382 ms | 835 ms | −40% |
-| `latest_hour` | 93 ms | 58 ms | 1602 ms | 982 ms | −39% |
-| `unique_count_hour` | 65 ms | 45 ms | 1101 ms | 737 ms | −33% |
-| `agent_runs_by_name` | 8 ms | 7 ms | 70 ms | 50 ms | −28% |
-| `count_hour` | 14 ms | 12 ms | 184 ms | 151 ms | −18% |
-| `kong_api_request_total` | 8 ms | 8 ms | 92 ms | 90 ms | −3% |
+| `kong_status_by_route` | 91 ms | 15 ms | 1559 ms | 193 ms | **−88%** |
+| `llm_tokens_by_model` | 67 ms | 15 ms | 1148 ms | 196 ms | **−83%** |
+| `kong_llm_tokens_total` | 101 ms | 22 ms | 1783 ms | 342 ms | **−81%** |
+| `sum_day_by_dim` | 51 ms | 14 ms | 835 ms | 176 ms | **−79%** |
+| `sum_hour_group1_group2` | 74 ms | 26 ms | 1227 ms | 372 ms | −70% |
+| `sum_hour_group1_group2_no_prewhere` | 71 ms | 25 ms | 1184 ms | 373 ms | −69% |
+| `sum_total_filter2` | 55 ms | 23 ms | 903 ms | 343 ms | −62% |
+| `sum_hour_group1` | 65 ms | 29 ms | 1098 ms | 445 ms | −60% |
+| `sum_total_filter1` | 57 ms | 26 ms | 954 ms | 403 ms | −58% |
+| `sum_hour_group1_no_prewhere` | 60 ms | 30 ms | 1008 ms | 450 ms | −55% |
+| `workload_seconds_by_region` | 17 ms | 10 ms | 236 ms | 113 ms | −52% |
+| `sum_total` | 65 ms | 35 ms | 1095 ms | 563 ms | −49% |
+| `sum_total_by_subject` | 67 ms | 37 ms | 1116 ms | 596 ms | −47% |
+| `sum_month` / `max` / `min` / `sum_day` / `sum_hour` / `sum_day_by_subject` / `sum_hour_tz` / `sum_no_window` | ~68 ms | ~40 ms | ~1160 ms | ~650 ms | ≈−44% |
+| `avg_hour` | 72 ms | 43 ms | 1214 ms | 704 ms | −42% |
+| `latest_hour` | 98 ms | 61 ms | 1692 ms | 1015 ms | −40% |
+| `sum_minute` | 83 ms | 52 ms | 1385 ms | 838 ms | −39% |
+| `unique_count_hour` | 64 ms | 44 ms | 1077 ms | 708 ms | −34% |
+| `count_total` | 11 ms | 8 ms | 127 ms | 89 ms | −30% |
+| `agent_runs_by_name` | 8 ms | 7 ms | 76 ms | 55 ms | −28% |
+| `kong_api_request_total` | 9 ms | 9 ms | 112 ms | 99 ms | −11% |
+| `count_hour` | 14 ms | 14 ms | 193 ms | 172 ms | −11% |
+| `distinct_subjects` | 24 ms | 25 ms | 367 ms | 379 ms | +3% |
 
-Every query improves, the more so the wider the `data` read: the per-meter path
-queries (`kong_status_by_route`, `llm_tokens_by_model`, `kong_llm_tokens_total`)
-win **−80% to −87%** because native JSON reads only the named subcolumn while
-String parses the whole document per row. `kong_api_request_total` — a plain
-`count(*)` that never reads `data` — is the smallest mover (−3% CPU, 92→90 ms):
-the JSON column can neither help nor meaningfully hurt a key-only scan.
+The win scales with how much `data` a query reads: the per-meter path queries
+(`kong_status_by_route`, `llm_tokens_by_model`, `kong_llm_tokens_total`,
+`sum_day_by_dim`) win **−79% to −88%** because native JSON reads only the named
+subcolumn while String parses the whole document per row. Queries that touch no
+`data` path are near-neutral: `count_hour`/`kong_api_request_total` (key-only
+`count(*)`) move −11%, and `distinct_subjects` (a `DISTINCT subject` scan, no
+`data` read) is the one query slightly slower on proposal (+3% CPU, 367→379 ms) —
+the JSON column adds marginal primary-key-scan overhead it can't offset without a
+payload read.
 
 **`proposal`-only queries** (the extra grouped api variants + the lookup path;
 no baseline equivalent):
 
 | query | p50 | CPU p50 | notes |
 | --- | ---: | ---: | --- |
-| `kong_api_request_by_method` | 11 ms | 126 ms | grouped (1 dim), base table |
-| `kong_api_request_by_service` | 14 ms | 176 ms | grouped (2 dims), base table |
-| `kong_api_request_by_all_dims` | 187 ms | 2180 ms | grouped (all 19 dims), base table — worst-case fan-out |
-| `lookup_by_id` | 52 ms | 768 ms | point-lookup path (bloom-pruned; see Findings) |
+| `kong_api_request_by_method` | 11 ms | 125 ms | grouped (1 dim), base table |
+| `kong_api_request_by_service` | 14 ms | 178 ms | grouped (2 dims), base table |
+| `kong_api_request_by_all_dims` | 193 ms | 2259 ms | grouped (all 19 dims), base table — worst-case fan-out |
+| `lookup_by_id` | 52 ms | 766 ms | point-lookup path (bloom-pruned; see Findings) |
 
 ### Storage
 
@@ -139,9 +149,10 @@ gated on both runs covering an identical seeded window:
 ./bin/bench compare baseline-openmeter proposal   # perf deltas + a Value-parity table
 ```
 
-**22/22 base-table queries MATCH** between `data String` and `data JSON` — every
-aggregation (SUM/COUNT/AVG/MIN/MAX/UNIQUE/LATEST, grouped and total) is
-value-identical, so the two designs compute the same billing numbers.
+**30/30 shared queries MATCH** between `data String` and `data JSON` — every
+aggregation (SUM/COUNT/AVG/MIN/MAX/UNIQUE/LATEST, grouped and total, including
+the production-shaped range-total queries) is value-identical, so the two designs
+compute the same billing numbers.
 
 `latest_hour` (`argMax(value, time)`) initially differed: the seed has windows
 with multiple events sharing the exact maximum timestamp, and a bare
@@ -158,9 +169,11 @@ _candidate-only_ in the parity table.)
 ### Verdict
 
 **`proposal` (`data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id`) is the
-recommended design**: −44% median p50 / −46% median CPU on meter queries, −31% on
-disk, and identical billing values to the baseline. The only regression is a plain
-no-`data` `count(*)` (+23 ms absolute).
+recommended design**: −42% median p50 / −44.5% median CPU across 30 shared meter
+queries, −31% on disk, and identical billing values to the baseline (30/30 value
+parity). The only query that regresses is `distinct_subjects` (+3% CPU) — a
+`DISTINCT subject` scan that reads no `data` path, so JSON can't help it; every
+query that touches `data` improves.
 
 ## Findings
 
@@ -228,19 +241,22 @@ billing-safe query shape.
 ### What this run measured
 
 Latest run: fresh 10M rows, 10 iterations, single-node ClickHouse 26.2.5.45.
-Two table-design scenarios, 22 shared type-agnostic decimal meter queries
-(`proposal` runs 26: the shared set + `lookup_by_id.sql` + the 3 extra
-grouped Kong api variants). Per-run JSON + markdown reports are under
-[`bench/results/<scenario>/`](bench/results/). The delta tables below are
-`bench compare baseline-openmeter <variant>` output, not hand-transcribed.
+Two table-design scenarios, 30 shared type-agnostic decimal meter queries
+(`proposal` runs 34: the shared set + `lookup_by_id.sql` + the 3 extra
+grouped Kong api variants). The shared set includes the production-shaped
+range-total queries (`sum_total*`, `count_total`, `distinct_subjects`,
+`sum_day_by_*`) mapped from the live OpenMeter slow-query log. Per-run JSON +
+markdown reports are under [`bench/results/<scenario>/`](bench/results/). The
+delta tables below are `bench compare baseline-openmeter <variant>` output, not
+hand-transcribed.
 
-**Median Δ across the 22 shared meter queries (vs baseline `data String`):**
+**Median Δ across the 30 shared meter queries (vs baseline `data String`):**
 
 | Variant | DDL change vs baseline | Median p50 Δ | Median CPU Δ | Ingest Δ |
 | --- | --- | ---: | ---: | ---: |
-| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−43%** | **−46%** | −30% |
+| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−42%** | **−44.5%** | −31% |
 
-(The −30% ingest Δ is native JSON's write-time cost — parsing each payload into
+(The −31% ingest Δ is native JSON's write-time cost — parsing each payload into
 typed subcolumns on insert — now that the materialized views are gone; it is the
 price paid for the query-side wins above.)
 
@@ -255,22 +271,22 @@ to re-measure it on your own hardware.)
 table-type), `CODEC(ZSTD(3))` on `data` (compression — measured −43% disk on the
 `data` column vs LZ4), and a `bloom_filter` skip index on `id`. The whole
 `proposal` table is **−31% on disk** vs the String baseline (947 → 650 MiB). It is
-the fastest table design — **−43% median p50 / −46% CPU** vs the String baseline.
+the fastest table design — **−42% median p50 / −44.5% CPU** vs the String baseline.
 
 **Per-meter-path queries** (read fields from large multi-field payloads — where
 touching the whole `data` value costs most), CPU vs baseline (fresh 10M):
 
 | query | proposal CPU Δ |
 | --- | ---: |
-| `kong_status_by_route` | **−87%** |
-| `llm_tokens_by_model` | **−80%** |
-| `workload_seconds_by_region` | **−56%** |
+| `kong_status_by_route` | **−88%** |
+| `llm_tokens_by_model` | **−83%** |
+| `workload_seconds_by_region` | **−52%** |
 
 Native JSON wins by reading only the named typed subcolumn, while a String column
 parses the whole document per row. The wider the payload, the bigger the gap.
 
-**`count_hour` / `agent_runs_by_name`** (no `data` read in the agg) move within
-run-to-run noise.
+**`count_hour` / `kong_api_request_total`** (no `data` read in the agg) move
+within run-to-run noise (−11%).
 
 **Tradeoff summary.** `proposal` is the recommended default: fastest p50, −43%
 disk on the data column, and the bloom on `id` essentially free.
