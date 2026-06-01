@@ -231,6 +231,14 @@ type BenchOpts struct {
 	ColdCache bool
 }
 
+// RenderParams is the exported entry point for renderParams, used by the
+// value-digest capture (captureValueDigests in cmd/bench/main.go), which renders
+// the same `{name:Type}` placeholders the benchmark path does before hashing
+// each query's result for the `bench compare` value-parity check.
+func RenderParams(sql string, params map[string]string) (string, error) {
+	return renderParams(sql, params)
+}
+
 // renderParams substitutes every `{name:Type}` placeholder in sql with the
 // matching value from params. The value must already be a valid SQL literal
 // (e.g. `'default'`, `1779456720`, `['s1', 's2']`); the caller is responsible

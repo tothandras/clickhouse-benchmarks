@@ -213,6 +213,12 @@ func run(ctx context.Context, f *flags) error {
 		// matching query's results below.
 		pruning := captureIndexPruning(ctx, conn, sc, table, defaultParams(f))
 
+		// Capture each query's normalized result digest once (a property of
+		// (scenario, query, params), independent of the timed variants). Stored in
+		// the run JSON so `bench compare` can check value parity across scenarios
+		// with no extra DB round-trip.
+		valueParity := captureValueDigests(ctx, conn, sc, f)
+
 		var results []runner.BenchResult
 		for rep := 0; rep < f.repeat; rep++ {
 			for _, conc := range f.concurrency {
@@ -269,6 +275,7 @@ func run(ctx context.Context, f *flags) error {
 			Repeat:             f.repeat,
 			Ingest:             ingest,
 			Queries:            results,
+			ValueParity:        valueParity,
 		}
 		path, err := runner.Write(f.resultsDir, runRecord)
 		if err != nil {
@@ -373,6 +380,36 @@ func captureIndexPruning(ctx context.Context, conn driver.Conn, sc runner.Scenar
 		PartsWithout:    pWithout,
 		PartsWith:       pWith,
 	}
+}
+
+// captureValueDigests computes a normalized result digest for every query in
+// the scenario, once, using the same params the timed run binds. The digests +
+// the resolved time window go into the run JSON so `bench compare` can verify
+// value parity across scenarios (same events → same meter output) by diffing
+// digests, gated on an identical window. Best-effort: a per-query failure is
+// recorded as a digest error, never aborts the run; returns nil only if params
+// can't be built at all.
+func captureValueDigests(ctx context.Context, conn driver.Conn, sc runner.Scenario, f *flags) *runner.ValueParity {
+	params := defaultParams(f)
+	vp := &runner.ValueParity{
+		From:    strings.Trim(params["from"], "'"),
+		To:      strings.Trim(params["to"], "'"),
+		TimeEnd: f.timeEnd,
+		Digests: map[string]runner.QueryDigest{},
+	}
+	for _, q := range runner.LoadQueries(sc) {
+		sql, err := runner.RenderParams(q.SQL, params)
+		if err != nil {
+			vp.Digests[q.Name] = runner.QueryDigest{Error: err.Error()}
+			continue
+		}
+		d, err := runner.DigestResult(ctx, conn, strings.TrimRight(strings.TrimSpace(sql), ";"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: value digest for %s/%s skipped: %v\n", sc.Name, q.Name, err)
+		}
+		vp.Digests[q.Name] = d
+	}
+	return vp
 }
 
 // parseExplainCount pulls the surviving count from an EXPLAIN line of the form

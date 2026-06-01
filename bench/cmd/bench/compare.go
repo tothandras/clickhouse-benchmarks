@@ -70,6 +70,75 @@ func compare(resultsDir, baseName, candName string) error {
 
 	fmt.Printf("\nIngest: base %s, candidate %s (%s)\n",
 		ingestStr(base.Ingest), ingestStr(cand.Ingest), ingestDelta(base.Ingest, cand.Ingest))
+
+	if err := compareValues(base, cand, baseName, candName); err != nil {
+		return err
+	}
+	return nil
+}
+
+// compareValues diffs the per-query result digests recorded by each run, proving
+// the two table designs compute the same meter values. It only compares when
+// both runs covered an IDENTICAL seeded window — otherwise the events differ
+// (e.g. an unpinned per-scenario time.Now() TimeEnd) and a digest mismatch would
+// be a false alarm, not a design difference. Returns a non-nil error if any
+// query's values genuinely differ, so the command exits non-zero (CI gate).
+func compareValues(base, cand runner.Run, baseName, candName string) error {
+	bp, cp := base.ValueParity, cand.ValueParity
+	if bp == nil || cp == nil {
+		fmt.Println("\n## Value parity\n\nskipped — one or both runs predate value-digest capture (re-run the bench to populate it).")
+		return nil
+	}
+	if bp.From != cp.From || bp.To != cp.To {
+		fmt.Printf("\n## Value parity\n\nskipped — runs cover different windows (%s: %s→%s, %s: %s→%s). "+
+			"Re-run both with the same `--time-end` so they seed an identical event stream, then compare.\n",
+			baseName, bp.From, bp.To, candName, cp.From, cp.To)
+		return nil
+	}
+
+	names := make([]string, 0, len(bp.Digests))
+	for n := range bp.Digests {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	fmt.Printf("\n## Value parity (window %s → %s)\n\n", bp.From, bp.To)
+	fmt.Println("| Query | result | rows |")
+	fmt.Println("| --- | --- | ---: |")
+	var match, differ, missing int
+	var differing []string
+	for _, n := range names {
+		b := bp.Digests[n]
+		c, ok := cp.Digests[n]
+		switch {
+		case !ok:
+			fmt.Printf("| %s | _(candidate only)_ | %d |\n", n, b.Rows)
+			missing++
+		case b.Error != "" || c.Error != "":
+			fmt.Printf("| %s | ERROR | — |\n", n)
+			differ++
+			differing = append(differing, n)
+		case b.Hash == c.Hash:
+			fmt.Printf("| %s | MATCH | %d |\n", n, b.Rows)
+			match++
+		default:
+			fmt.Printf("| %s | **DIFFERS** | %d vs %d |\n", n, b.Rows, c.Rows)
+			differ++
+			differing = append(differing, n)
+		}
+	}
+	// candidate-only queries (present in cand, absent in base)
+	for n := range cp.Digests {
+		if _, ok := bp.Digests[n]; !ok {
+			fmt.Printf("| %s | _(candidate only)_ | %d |\n", n, cp.Digests[n].Rows)
+			missing++
+		}
+	}
+	fmt.Printf("\nMATCH=%d DIFFERS=%d (candidate-only=%d)\n", match, differ, missing)
+	if differ > 0 {
+		return fmt.Errorf("value parity: %d quer(y/ies) differ between %s and %s: %s",
+			differ, baseName, candName, strings.Join(differing, ", "))
+	}
 	return nil
 }
 

@@ -44,6 +44,35 @@ type Run struct {
 	Repeat             int                `json:"repeat,omitempty"`
 	Ingest             *IngestResult      `json:"ingest,omitempty"`
 	Queries            []BenchResult      `json:"queries"`
+
+	// ValueParity records, per query name, a normalized digest of that query's
+	// result on this scenario's table — so two scenarios' runs can be checked for
+	// value equality (same events → same meter output regardless of table design)
+	// by diffing digests, with no second DB round-trip. Computed once per
+	// (scenario, query), independent of the timed concurrency/cold/repeat variants.
+	// nil on older result files or when capture was skipped.
+	ValueParity *ValueParity `json:"value_parity,omitempty"`
+}
+
+// ValueParity holds the per-query result digests plus the seeded time window
+// they were computed over. `bench compare` only diffs digests between two runs
+// whose Window matches — otherwise the events differ (e.g. unpinned TimeEnd
+// skew) and a digest mismatch would be a false alarm, not a design difference.
+type ValueParity struct {
+	From    string                 `json:"from"`    // resolved query window start (rendered literal, no quotes)
+	To      string                 `json:"to"`      // resolved query window end
+	TimeEnd string                 `json:"time_end,omitempty"` // --time-end pin if set; "" = per-run time.Now()
+	Digests map[string]QueryDigest `json:"digests"` // query name → digest
+}
+
+// QueryDigest is a normalized fingerprint of one query's result set: a hash over
+// the rows (float/decimal cells rounded to DigestDecimals, rows sorted so GROUP
+// BY tie-ordering doesn't matter) plus the row count. Error is set instead when
+// the query failed to run.
+type QueryDigest struct {
+	Hash  string `json:"hash,omitempty"`
+	Rows  int64  `json:"rows"`
+	Error string `json:"error,omitempty"`
 }
 
 // IntList marshals as a JSON array but unmarshals from either a JSON array
