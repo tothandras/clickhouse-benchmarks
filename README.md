@@ -167,16 +167,22 @@ gated on both runs covering an identical seeded window:
 ./bin/bench compare baseline-openmeter proposal   # perf deltas + a Value-parity table
 ```
 
-**21/22 base-table queries MATCH** between `data String` and `data JSON` — all
-deterministic aggregations (SUM/COUNT/AVG/MIN/MAX/UNIQUE, grouped and total) are
-value-identical, so the two designs compute the same billing numbers. The single
-`DIFFERS` is `latest_hour` (`argMax(value, time)`): the seed has windows with
-multiple events sharing the exact maximum timestamp, and `argMax` breaks such ties
-nondeterministically, so String and JSON can pick different rows. This is an
-`argMax`-tie artifact, **not** a divergence between the table designs — every
-order-independent aggregate matches exactly. (The rollup-served and grouped
-api queries are proposal-only, so they appear as _candidate-only_ in the parity
-table; the rollups' correctness is verified separately by billing-exactness above.)
+**22/22 base-table queries MATCH** between `data String` and `data JSON` — every
+aggregation (SUM/COUNT/AVG/MIN/MAX/UNIQUE/LATEST, grouped and total) is
+value-identical, so the two designs compute the same billing numbers.
+
+`latest_hour` (`argMax(value, time)`) initially differed: the seed has windows
+with multiple events sharing the exact maximum timestamp, and a bare
+`argMax(value, time)` breaks such ties by physical read order — which the String
+and JSON layouts resolve differently. That was a **query-determinism gap, not a
+data or design difference** (the tied rows are byte-identical in both tables). The
+fix is a deterministic tiebreaker, `argMax(value, (time, store_row_id))`: the
+ingest-ordered ULID makes "latest" genuine last-write-wins, and `store_row_id` is
+a top-level column identical in both tables. With it, `latest_hour` matches.
+
+(The rollup-served and grouped api queries are proposal-only, so they appear as
+_candidate-only_ in the parity table; the rollups' correctness is verified
+separately by billing-exactness above.)
 
 ### Verdict
 
@@ -388,8 +394,9 @@ the `data-as-map` scenario was removed. Every query has a same-output sibling in
 both scenarios, plus base-table oracle queries (`kong_api_request_total`,
 `kong_llm_tokens_total`) so each rollup-served query has a direct value check.
 Each run records a per-query result digest, and `bench compare` diffs them
-(`21/22` base-table queries value-identical baseline↔proposal; the lone
-`latest_hour` mismatch is an `argMax`-tie artifact, not a design difference — see
+(**22/22** base-table queries value-identical baseline↔proposal — `latest_hour`
+uses an `argMax(value, (time, store_row_id))` tiebreaker so a timestamp tie can't
+make the two layouts disagree; see
 [Correctness](#correctness--value-parity-across-designs)). Note: value parity
 requires a shared `--time-end` (the seeder otherwise captures `time.Now()` per
 scenario, shifting hour buckets ~minutes); the harness takes `--time-end RFC3339`

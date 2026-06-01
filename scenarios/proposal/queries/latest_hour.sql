@@ -1,7 +1,10 @@
 SELECT
   tumbleStart(proposal_events.time, toIntervalHour(1), 'UTC') AS windowstart,
   tumbleEnd(proposal_events.time, toIntervalHour(1), 'UTC') AS windowend,
-  argMax(toDecimal128OrNull(toString(proposal_events.data.value), 19), proposal_events.time) AS value,
+  -- Tiebreak on store_row_id (the ingest-ordered ULID) so "latest" is
+  -- deterministic when multiple events share the same `time` — otherwise argMax
+  -- picks an arbitrary tied row and the String vs JSON layouts can disagree.
+  argMax(toDecimal128OrNull(toString(proposal_events.data.value), 19), (proposal_events.time, proposal_events.store_row_id)) AS value,
   proposal_events.subject AS subject
 FROM proposal_events
 WHERE proposal_events.namespace = {namespace:String}
