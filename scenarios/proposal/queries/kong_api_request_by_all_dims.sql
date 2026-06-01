@@ -1,10 +1,7 @@
--- kong.api_request COUNT grouped by ALL 19 canonical groupBy dims from
--- scenarios/proposal/meters.yaml (kong_konnect_api_request), hourly window.
--- Worst-case high-cardinality group-by on the base table: three of the dims
--- (client_ip, request_uri, request_user_agent) are ~unique per event, which is
--- exactly why the api rollup is DIMS-FREE — a dims-full rollup measured ~1× (no
--- compression), so this full-fan grouped query intentionally has no rollup to
--- serve it and runs against proposal_events. Measures the cost of materializing
+-- kong.api_request COUNT grouped by ALL 19 canonical groupBy dims of the
+-- kong_konnect_api_request meter, hourly window. Worst-case high-cardinality
+-- group-by on the base table: three of the dims (client_ip, request_uri,
+-- request_user_agent) are ~unique per event. Measures the cost of materializing
 -- every declared dim from the JSON payload. All paths use the untyped
 -- toString(data.<path>.:String) access mandated by the README, matching
 -- kong_status_by_route.sql so the read is apples-to-apples.

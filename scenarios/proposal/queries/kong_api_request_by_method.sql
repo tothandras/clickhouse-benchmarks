@@ -1,7 +1,6 @@
 -- kong.api_request COUNT grouped by a single low-cardinality dimension
--- (data.request_method, ~5 values), hourly window. Base-table read: the api
--- rollup is dims-free by design, so all dim-filtered/grouped api queries run
--- here. PREWHERE-eligible filter on namespace/type/subject; group-by reads one
+-- (data.request_method, ~5 values), hourly window. Base-table read.
+-- PREWHERE-eligible filter on namespace/type/subject; group-by reads one
 -- JSON path. Cardinality-ladder companion to kong_api_request_by_service.sql /
 -- kong_status_by_route.sql / kong_api_request_by_all_dims.sql.
 SELECT

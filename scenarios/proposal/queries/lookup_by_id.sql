@@ -13,8 +13,9 @@
 --   SELECT ... FROM proposal_events
 --   WHERE namespace = '<ns>' AND id = '<a literal id from the table>';
 -- and confirm the `om_events_id_bloom` skip index prunes the scan (measured:
--- 611 -> 3 granules, 9 -> 1 parts at 5M rows). Against scenarios/data-as-json
--- (no bloom) the same lookup touches all granules in the namespace.
+-- 611 -> 3 granules, 9 -> 1 parts at 5M rows). Against a no-bloom table
+-- (e.g. scenarios/baseline-openmeter) the same lookup touches all granules
+-- in the namespace.
 --
 -- Measured wall-clock (literal id, 5M rows, single node): the bloom reads
 -- ~14-42x fewer rows; median is near break-even when everything is in page

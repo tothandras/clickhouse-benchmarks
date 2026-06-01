@@ -1,6 +1,5 @@
--- kong.api_request COUNT total over [from, to) — BASE-TABLE oracle, the
--- same-output sibling of kong_api_request_total_hybrid (which serves this from
--- the rollup). Pairs 1:1 with baseline-openmeter/queries/kong_api_request_total.sql.
+-- kong.api_request COUNT total over [from, to), read directly from the base
+-- table. Pairs 1:1 with baseline-openmeter/queries/kong_api_request_total.sql.
 SELECT count(*) AS value
 FROM proposal_events
 WHERE proposal_events.namespace = {namespace:String}

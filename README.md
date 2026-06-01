@@ -14,13 +14,6 @@ no per-meter fan-out on insert *across the thousands of unknown meters*, and
 exact billing arithmetic. The recommended table and query templates that come
 out the other side are in [Findings](#findings) below.
 
-The one sanctioned exception to "no per-meter fan-out": for a *handful of
-known-schema meters* whose paths/types are fixed (here, the two Kong meters in
-[`scenarios/proposal/meters.yaml`](scenarios/proposal/meters.yaml)), `proposal`
-ships dedicated materialized-view rollups. Two MVs for two known meters don't
-collapse ingest the way per-meter fan-out across thousands would; the base table
-stays generic for everything else. See [Known-meter rollups](#known-meter-rollups).
-
 ## Layout
 
 - `scenarios/<name>/` — one table-design variant: `init.sql`, optional
@@ -77,7 +70,7 @@ stream — required for the value-parity check below and for reproducibility).
 Two scenarios:
 
 - **`baseline-openmeter`** — `data String`, queried via `JSON_VALUE(data, '$.path')` (upstream OpenMeter shape).
-- **`proposal`** — `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id`, queried via native subcolumns; plus the two known-meter Kong rollups.
+- **`proposal`** — `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id`, queried via native subcolumns.
 
 Both tables hold the same events over the same window
 (`2026-05-29 02:00:00 → 2026-06-01 01:59:59`).
@@ -85,48 +78,44 @@ Both tables hold the same events over the same window
 ### Query performance — baseline vs proposal
 
 CPU is `OSCPUVirtualTimeMicroseconds` p50 (summed across query threads); p50 is
-wall-clock. **Proposal is faster on every meter query** — median **−44% p50 /
-−46% CPU** across the 21 shared queries.
+wall-clock. **Proposal is faster on every meter query** — median **−43% p50 /
+−46% CPU** across the 22 shared queries.
 
 | query | base p50 | prop p50 | base CPU | prop CPU | CPU Δ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `kong_llm_tokens_total` | 96 ms | 14 ms | 1694 ms | 208 ms | **−88%** |
-| `kong_status_by_route` | 79 ms | 14 ms | 1366 ms | 175 ms | **−87%** |
-| `llm_tokens_by_model` | 60 ms | 14 ms | 1008 ms | 181 ms | **−82%** |
-| `sum_hour_group1_group2_no_prewhere` | 67 ms | 22 ms | 1127 ms | 332 ms | −71% |
-| `sum_hour_group1_group2` | 67 ms | 23 ms | 1129 ms | 339 ms | −70% |
-| `sum_hour_group1` | 58 ms | 27 ms | 978 ms | 426 ms | −56% |
-| `workload_seconds_by_region` | 16 ms | 9 ms | 222 ms | 100 ms | −55% |
-| `sum_no_window` | 65 ms | 35 ms | 1086 ms | 570 ms | −48% |
-| `latest_hour` | 68 ms | 38 ms | 1167 ms | 621 ms | −47% |
-| `avg_hour` / `min` / `max` / `sum_hour` / `sum_day` / `sum_month` / `sum_hour_tz` | ~67 ms | ~38 ms | ~1140 ms | ~620 ms | ≈−46% |
-| `sum_minute` | 80 ms | 49 ms | 1349 ms | 798 ms | −41% |
-| `unique_count_hour` | 60 ms | 38 ms | 1024 ms | 622 ms | −39% |
-| `count_hour` | 13 ms | 10 ms | 179 ms | 135 ms | −24% |
-| `agent_runs_by_name` | 6 ms | 6 ms | 60 ms | 44 ms | −27% |
-| `kong_api_request_total` | 7 ms | 9 ms | 86 ms | 109 ms | +28% |
+| `kong_status_by_route` | 87 ms | 15 ms | 1475 ms | 186 ms | **−87%** |
+| `kong_llm_tokens_total` | 99 ms | 22 ms | 1713 ms | 339 ms | **−80%** |
+| `llm_tokens_by_model` | 68 ms | 17 ms | 1128 ms | 226 ms | **−80%** |
+| `sum_hour_group1_group2_no_prewhere` | 72 ms | 27 ms | 1193 ms | 394 ms | −67% |
+| `sum_hour_group1_group2` | 69 ms | 29 ms | 1150 ms | 437 ms | −62% |
+| `sum_hour_group1` | 59 ms | 29 ms | 988 ms | 437 ms | −56% |
+| `workload_seconds_by_region` | 17 ms | 10 ms | 241 ms | 106 ms | −56% |
+| `sum_hour_group1_no_prewhere` | 61 ms | 30 ms | 1008 ms | 458 ms | −55% |
+| `sum_no_window` | 68 ms | 37 ms | 1159 ms | 591 ms | −49% |
+| `sum_month` / `max` / `min` / `sum_day` / `avg_hour` / `sum_hour` / `sum_hour_tz` | ~70 ms | ~40 ms | ~1180 ms | ~645 ms | ≈−45% |
+| `sum_minute` | 83 ms | 52 ms | 1382 ms | 835 ms | −40% |
+| `latest_hour` | 93 ms | 58 ms | 1602 ms | 982 ms | −39% |
+| `unique_count_hour` | 65 ms | 45 ms | 1101 ms | 737 ms | −33% |
+| `agent_runs_by_name` | 8 ms | 7 ms | 70 ms | 50 ms | −28% |
+| `count_hour` | 14 ms | 12 ms | 184 ms | 151 ms | −18% |
+| `kong_api_request_total` | 8 ms | 8 ms | 92 ms | 90 ms | −3% |
 
-The single regression — `kong_api_request_total` (a plain `count(*)`, +28% CPU
-but only 86→109 ms in absolute terms) — is a query that never reads `data`, so
-the JSON column's only effect is a slightly larger primary-key scan; it is the
-one case where the table type can't help and adds marginal overhead. Everything
-that touches a `data` path improves, the more so the wider the read: the per-meter
-path queries (`kong_status_by_route`, `llm_tokens_by_model`) win **−82% to −88%**
-because native JSON reads only the named subcolumn while String parses the whole
-document per row.
+Every query improves, the more so the wider the `data` read: the per-meter path
+queries (`kong_status_by_route`, `llm_tokens_by_model`, `kong_llm_tokens_total`)
+win **−80% to −87%** because native JSON reads only the named subcolumn while
+String parses the whole document per row. `kong_api_request_total` — a plain
+`count(*)` that never reads `data` — is the smallest mover (−3% CPU, 92→90 ms):
+the JSON column can neither help nor meaningfully hurt a key-only scan.
 
-**`proposal`-only queries** (rollup-served + the extra grouped variants; no
-baseline equivalent):
+**`proposal`-only queries** (the extra grouped api variants + the lookup path;
+no baseline equivalent):
 
 | query | p50 | CPU p50 | notes |
 | --- | ---: | ---: | --- |
-| `kong_llm_tokens_total_hybrid` | 9 ms | 50 ms | rollup-served total SUM (vs base-table 208 ms) |
-| `kong_api_request_total_hybrid` | 10 ms | 62 ms | rollup-served total COUNT (vs base-table 109 ms) |
-| `kong_status_by_route_rollup` | 13 ms | 178 ms | grouped via 16-dim rollup — ≈ the 175 ms base table (no win) ⚠ |
-| `kong_api_request_by_method` | 10 ms | 120 ms | grouped (1 dim), base table |
-| `kong_api_request_by_service` | 14 ms | 183 ms | grouped (2 dims), base table |
-| `kong_api_request_by_all_dims` | 185 ms | 2186 ms | grouped (all 19 dims), base table — worst-case fan-out |
-| `lookup_by_id` | 49 ms | 729 ms | point-lookup path (bloom-pruned; see Findings) |
+| `kong_api_request_by_method` | 11 ms | 126 ms | grouped (1 dim), base table |
+| `kong_api_request_by_service` | 14 ms | 176 ms | grouped (2 dims), base table |
+| `kong_api_request_by_all_dims` | 187 ms | 2180 ms | grouped (all 19 dims), base table — worst-case fan-out |
+| `lookup_by_id` | 52 ms | 768 ms | point-lookup path (bloom-pruned; see Findings) |
 
 ### Storage
 
@@ -137,23 +126,6 @@ baseline equivalent):
 
 Proposal is **−31% on disk** (947 → 650 MiB) despite native JSON's per-path
 subcolumn overhead — ZSTD(3) on the payload more than pays for it.
-
-### Known-meter rollups
-
-| rollup | rows | on-disk | compression vs base events | billing-exact? |
-| --- | ---: | ---: | ---: | --- |
-| `proposal_llm_tokens_rollup` (SUM tokens, 14 dims) | 1.50 M | 47.3 MiB | **1.0×** (from 1.50 M llm events) | ✅ `sumMerge == base` (3,005,145,740) |
-| `proposal_api_request_rollup` (COUNT, 16 dims) | 2.50 M | 65.4 MiB | **1.0×** (from 2.50 M api events) | ✅ `countMerge == base` (2,501,717) |
-
-Both rollups are **billing-exact** (rollup state == direct base-table aggregate,
-to the unit). But both also compress **1.0×** — one rollup row per source event —
-because their dimension sets are high-enough cardinality that `GROUP BY` collapses
-nothing. The rollup-served *total* queries are still the fastest path (they read a
-narrow pre-aggregated state, 50–62 ms CPU vs 109–208 ms on the base table), but the
-*grouped* api rollup query (`kong_status_by_route_rollup`, 178 ms) is **no faster
-than the base-table version** (175 ms): a 1.0× rollup is just a second copy of the
-data. See [Known-meter rollups](#known-meter-rollups) for the dims-bounded-vs-dims-free
-analysis; the dims-free design (which compresses ~343×) remains the correct one.
 
 ### Correctness — value parity across designs
 
@@ -180,21 +152,15 @@ fix is a deterministic tiebreaker, `argMax(value, (time, store_row_id))`: the
 ingest-ordered ULID makes "latest" genuine last-write-wins, and `store_row_id` is
 a top-level column identical in both tables. With it, `latest_hour` matches.
 
-(The rollup-served and grouped api queries are proposal-only, so they appear as
-_candidate-only_ in the parity table; the rollups' correctness is verified
-separately by billing-exactness above.)
+(The extra grouped api queries are proposal-only, so they appear as
+_candidate-only_ in the parity table.)
 
 ### Verdict
 
 **`proposal` (`data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id`) is the
 recommended design**: −44% median p50 / −46% median CPU on meter queries, −31% on
 disk, and identical billing values to the baseline. The only regression is a plain
-no-`data` `count(*)` (+23 ms absolute). The two known-meter rollups serve the
-total-period COUNT/SUM fast and exactly, but at this seed's dimension cardinality
-they don't compress (1.0×), so the **dims-bounded `kong.api_request` rollup does
-not pay off** for grouped queries — dim-grouped api queries should run on the base
-table, and the rollup should stay **dims-free** (keyed only on
-namespace/subject/window) as originally designed.
+no-`data` `count(*)` (+23 ms absolute).
 
 ## Findings
 
@@ -226,10 +192,6 @@ CREATE TABLE IF NOT EXISTS om_events (
 PARTITION BY toYYYYMM(time)
 ORDER BY (namespace, type, subject, toStartOfHour(time));
 ```
-
-`proposal` additionally ships two materialized-view rollups for the known-schema
-Kong meters on top of this base table (see [Known-meter rollups](#known-meter-rollups)
-and the full [`scenarios/proposal/init.sql`](scenarios/proposal/init.sql)).
 
 ### The correctness fix (the headline of this run)
 
@@ -266,19 +228,21 @@ billing-safe query shape.
 ### What this run measured
 
 Latest run: fresh 10M rows, 10 iterations, single-node ClickHouse 26.2.5.45.
-Three table-design scenarios, 20 type-agnostic decimal meter queries each
-(`proposal` runs 23: the meter set + `lookup_by_id.sql` + the two Kong rollup
-hybrids). Full reports under [`bench/results/`](bench/results/) and the
-authoritative summary in [`bench/results/README.md`](bench/results/README.md).
-The delta tables below are `bench compare baseline-openmeter <variant>` output,
-not hand-transcribed.
+Two table-design scenarios, 22 shared type-agnostic decimal meter queries
+(`proposal` runs 26: the shared set + `lookup_by_id.sql` + the 3 extra
+grouped Kong api variants). Per-run JSON + markdown reports are under
+[`bench/results/<scenario>/`](bench/results/). The delta tables below are
+`bench compare baseline-openmeter <variant>` output, not hand-transcribed.
 
-**Median Δ across the 20 meter queries (vs baseline `data String`):**
+**Median Δ across the 22 shared meter queries (vs baseline `data String`):**
 
 | Variant | DDL change vs baseline | Median p50 Δ | Median CPU Δ | Ingest Δ |
 | --- | --- | ---: | ---: | ---: |
-| `data-as-map` | `data Map(String, String)` | −22% | −23% | −9% |
-| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−41%** | **−43%** | −27% |
+| **`proposal`** | `data JSON CODEC(ZSTD(3))` + `bloom_filter` on `id` | **−43%** | **−46%** | −30% |
+
+(The −30% ingest Δ is native JSON's write-time cost — parsing each payload into
+typed subcolumns on insert — now that the materialized views are gone; it is the
+price paid for the query-side wins above.)
 
 (Earlier runs also benched `data-as-json`, `order-by-extended-time`, and
 `with-id-bloom` as standalone scenarios. They were folded in / retired:
@@ -289,32 +253,27 @@ to re-measure it on your own hardware.)
 
 **The `proposal` scenario stacks the composable wins:** `data JSON` (the
 table-type), `CODEC(ZSTD(3))` on `data` (compression — measured −43% disk on the
-`data` column vs LZ4), and a `bloom_filter` skip index on `id`. It is the fastest
-table design — **−41% median p50 / −43% CPU** vs the String baseline.
+`data` column vs LZ4), and a `bloom_filter` skip index on `id`. The whole
+`proposal` table is **−31% on disk** vs the String baseline (947 → 650 MiB). It is
+the fastest table design — **−43% median p50 / −46% CPU** vs the String baseline.
 
 **Per-meter-path queries** (read fields from large multi-field payloads — where
 touching the whole `data` value costs most), CPU vs baseline (fresh 10M):
 
-| query | data-as-map | proposal |
-| --- | ---: | ---: |
-| `kong_status_by_route` | −25% | **−88%** |
-| `llm_tokens_by_model` | −40% | **−82%** |
-| `workload_seconds_by_region` | −7% | **−58%** |
+| query | proposal CPU Δ |
+| --- | ---: |
+| `kong_status_by_route` | **−87%** |
+| `llm_tokens_by_model` | **−80%** |
+| `workload_seconds_by_region` | **−56%** |
 
-Native JSON wins by reading only the named typed subcolumn; a String column
-parses the whole document per row, and a Map column materializes every key/value
-pair to find the named key. The wider the payload, the worse Map looks vs JSON.
-`data-as-map` is the middle option — roughly half the JSON speedup at half the
-ingest cost.
+Native JSON wins by reading only the named typed subcolumn, while a String column
+parses the whole document per row. The wider the payload, the bigger the gap.
 
 **`count_hour` / `agent_runs_by_name`** (no `data` read in the agg) move within
-run-to-run noise across both variants.
+run-to-run noise.
 
 **Tradeoff summary.** `proposal` is the recommended default: fastest p50, −43%
-disk on the data column, the bloom on `id` essentially free, plus the known-meter
-rollups below. `data-as-map` is the middle option — choose it if write throughput
-dominates *and* payloads are flat string→string (it does not match native JSON on
-read latency).
+disk on the data column, and the bloom on `id` essentially free.
 
 **`bloom_filter` on `id`** for the lookup-by-id path (`WHERE namespace = ?
 AND id = ?`, no time bound — the one access pattern the ORDER BY can't
@@ -342,99 +301,9 @@ doc's heuristic would predict the bloom is ineffective. The measured
 point lookup of a single id, the bloom probe is cheap and most granules
 genuinely don't contain that id, so pruning works even without correlation.
 
-### Known-meter rollups
-
-For the handful of meters whose schema is fixed and known, `proposal` ships
-dedicated **materialized-view rollups** on top of the base table. Two canonical
-Kong meters are modeled here, declared verbatim in
-[`scenarios/proposal/meters.yaml`](scenarios/proposal/meters.yaml):
-
-- `kong_konnect_llm_tokens` — SUM `$.tokens`, eventType `kong.llm_request`, 14 groupBy dims.
-- `kong_konnect_api_request` — COUNT, eventType `kong.api_request`, 19 groupBy dims.
-
-The rollup design carries the **bounded** groupBy dims of each meter:
-
-- **llm → dims-full rollup** (`AggregatingMergeTree`, all 14 dims as typed
-  columns + `sumState(tokens)`). Token state is `UInt64` (compact); queries cast
-  to `toDecimal128(…, 19)` at read time. Serves both the total-period SUM and
-  dim-filtered queries (by model/provider/route/…).
-- **api → dims-bounded rollup** (`countState` keyed `namespace, subject, window`
-  plus **16 of the 19** groupBy dims as typed columns). Currently shipped, but
-  **measured not to pay off** — see the failure note below. The 3 highest-card
-  dims (`client_ip`, `request_uri`, `request_user_agent`) are excluded; grouped
-  queries needing one of those fall back to the base table
-  (see `kong_api_request_by_all_dims.sql`).
-
-  > 🔴 **MEASURED FAILURE (20M, 2026-05-31) — kept as a documented negative result.**
-  > Dropping the 3 highest-card dims did **not** recover compression: the rollup is
-  > **5,002,087 rows from 5,002,087 api_request events = 1.0× (no compression)**,
-  > 131.8 MiB on disk. Root cause: the 8 *ID* dims (`api_id`≈30, `route_id`≈60,
-  > `service_id`≈40, `application_id`≈50, `api_product_id`, `api_product_version_id`,
-  > `control_plane_id`, `portal_id`) are each individually bounded but their
-  > **cross-product far exceeds 20M**, so `GROUP BY` collapses nothing (one rollup
-  > row per event). The grouped query it serves is barely faster:
-  > `kong_status_by_route_rollup` **223 ms** CPU vs `kong_status_by_route` **318 ms**
-  > on the base table (~1.3×) — nowhere near the 10–100× a real rollup gives. Only
-  > **7,300** distinct `(namespace, subject, hour)` keys exist; the original
-  > **dims-free** rollup keyed on those alone (~343× at 10M) was the correct design.
-  > **Recommendation:** revert to dims-free and run dim-grouped api queries on the
-  > base table. Rollups verified billing-exact regardless (api COUNT and llm SUM
-  > both equal the base table to the row).
-
-Total-period meter queries use arbitrary, non-hour-aligned `from`/`to`, so the
-rollup is read via a **3-part hybrid** — raw events for the partial first/last
-hour + rollup `sumMerge`/`countMerge` for the whole hours in between — which is
-**billing-exact for any boundaries** (verified rollup == base at 10M: llm
-3,005,145,740 tokens; api 2,501,717 count). The MVs must consume the *deduped*
-event stream in production.
-
-**Scenario pairing & value parity.** Only two scenarios remain — `baseline-openmeter`
-(`data String`, `JSON_VALUE` access) and `proposal` (`data JSON`, native subcolumns);
-the `data-as-map` scenario was removed. Every query has a same-output sibling in
-both scenarios, plus base-table oracle queries (`kong_api_request_total`,
-`kong_llm_tokens_total`) so each rollup-served query has a direct value check.
-Each run records a per-query result digest, and `bench compare` diffs them
-(**22/22** base-table queries value-identical baseline↔proposal — `latest_hour`
-uses an `argMax(value, (time, store_row_id))` tiebreaker so a timestamp tie can't
-make the two layouts disagree; see
-[Correctness](#correctness--value-parity-across-designs)). Note: value parity
-requires a shared `--time-end` (the seeder otherwise captures `time.Now()` per
-scenario, shifting hour buckets ~minutes); the harness takes `--time-end RFC3339`
-to pin one window across scenarios, and `bench compare` only diffs digests when
-both runs cover the same window.
-
 **Seed realism.** `route_name`/`service_name` are deterministic 1:1 labels of
 `route_id`/`service_id` (a route has one name), not independent draws — matching
-real Kong data and removing artificial cross-product inflation in the rollup analysis.
-
-**Measured (fresh 20M, corrected seed, single-node CH 26.2.5.45), baseline vs proposal CPU p50:**
-
-| query | base CPU | proposal CPU | Δ |
-| --- | ---: | ---: | ---: |
-| `kong_status_by_route` (status+route) | 1487 ms | 326 ms | **−78%** |
-| `llm_tokens_by_model` | 4050 ms | 590 ms | **−85%** |
-| `sum_hour_group1_group2` | 1114 ms | 454 ms | −59% |
-| `workload_seconds_by_region` | 751 ms | 317 ms | −58% |
-| `sum_hour` | 1103 ms | 800 ms | −27% |
-| `count_hour` (no `data` read) | 217 ms | 184 ms | −15% |
-
-Proposal (native JSON) is faster on every paired query (−15% to −85% CPU); the
-wider the payload read, the bigger the win. `proposal`-only rollup/extra queries:
-
-| query | p50 | CPU p50 | notes |
-| --- | ---: | ---: | --- |
-| `kong_api_request_total_hybrid` | 15 ms | 144 ms | rollup-served total COUNT |
-| `kong_llm_tokens_total_hybrid` | 18 ms | 210 ms | rollup-served total SUM |
-| `kong_status_by_route_rollup` | 17 ms | 242 ms | grouped via 16-dim rollup — only ~1.3× vs the 326 ms base table ⚠ |
-| `kong_api_request_by_method` | 17 ms | 244 ms | grouped (1 dim), base table |
-| `kong_api_request_by_service` | 22 ms | 325 ms | grouped (2 dims), base table |
-| `kong_api_request_by_all_dims` | 361 ms | 5432 ms | grouped (all 19 dims), base table — worst-case fan-out |
-
-> The rollup-served **total** queries (COUNT / SUM) remain the fast path. The
-> **grouped** api rollup query (`kong_status_by_route_rollup`) is only ~1.3× faster
-> than the equivalent base-table query because the 16-dim rollup does not compress
-> (1.0× — see the failure note above). Compression ratios this run: api rollup
-> **1.0×** (5.0M rows from 5.0M events), llm rollup **~1.0×** (3.0M from 3.0M).
+real Kong data, so grouped Kong queries compress realistically.
 
 ### What we deliberately didn't pick
 
@@ -445,10 +314,11 @@ wider the payload read, the bigger the win. `proposal`-only rollup/extra queries
   for *known* hot paths, but they hardcode those paths. Useful as
   per-deployment tuning, not as the shipped schema.
 - **Skip indexes on `subject`** — redundant with the ORDER BY prefix.
-- **Per-meter materialized views across *all* meters** — per-insert fan-out
-  across thousands of user-defined meters collapses ingest. (Dedicated rollups
-  for a *few known-schema* meters are different and *are* shipped — see
-  [Known-meter rollups](#known-meter-rollups).)
+- **Per-meter materialized views** — per-insert fan-out across user-defined
+  meters collapses ingest, and per-meter MVs contradict the meter-agnostic base
+  table. (A pair of known-schema Kong rollups was tried and removed: at this
+  seed's dimension cardinality they compressed 1.0× — one rollup row per event —
+  so they didn't pay off. See git history.)
 
 ### Query-time settings we tried
 

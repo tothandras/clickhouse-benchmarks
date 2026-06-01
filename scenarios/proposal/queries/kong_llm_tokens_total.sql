@@ -1,6 +1,5 @@
--- kong.llm_request SUM($.tokens) total over [from, to) — BASE-TABLE oracle, the
--- same-output sibling of kong_llm_tokens_total_hybrid (which serves this from the
--- rollup). Pairs 1:1 with baseline-openmeter/queries/kong_llm_tokens_total.sql.
+-- kong.llm_request SUM($.tokens) total over [from, to), read directly from the
+-- base table. Pairs 1:1 with baseline-openmeter/queries/kong_llm_tokens_total.sql.
 -- Type-agnostic decimal read.
 SELECT sum(toDecimal128OrNull(toString(proposal_events.data.tokens), 19)) AS value
 FROM proposal_events
