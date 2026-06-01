@@ -151,8 +151,8 @@ func idPool(salt uint64, n int) []string {
 // a multi-tenant gateway: a few control planes, dozens of routes/services, etc.).
 var (
 	cpPool      = idPool(1, 8)    // control planes
-	routePool   = idPool(2, 60)   // routes
-	servicePool = idPool(3, 40)   // services
+	routePool   = idPool(2, 20)   // routes   (each maps 1:1 to a route_name)
+	servicePool = idPool(3, 8)    // services (each maps 1:1 to a service_name)
 	pluginPool  = idPool(4, 12)   // ai plugins
 	apiPool     = idPool(5, 30)   // apis
 	apiProdPool = idPool(6, 20)   // api products
@@ -160,6 +160,33 @@ var (
 	appPool     = idPool(8, 50)   // applications
 	portalPool  = idPool(9, 6)    // portals
 )
+
+// Friendly names are stable ATTRIBUTES of a route/service, not independent random
+// draws: in real Kong data a route has exactly one name. route_name is a 1:1
+// function of route_id (service_name of service_id), so grouping by id then name
+// adds no groups (functional dependency) and grouping by name alone yields
+// exactly len(routePool)/len(servicePool) groups, like a real dashboard.
+var (
+	routeNames   = namesFor("route", len(routePool))
+	serviceNames = namesFor("service", len(servicePool))
+)
+
+func namesFor(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%s-%02d", prefix, i)
+	}
+	return out
+}
+
+func labelFor(id string, pool, labels []string) string {
+	for i, p := range pool {
+		if p == id {
+			return labels[i]
+		}
+	}
+	return labels[0]
+}
 
 // rngReader adapts a math/rand/v2 source to io.Reader so ULID entropy is
 // drawn from the seeder's deterministic stream (reproducible across runs).
@@ -223,6 +250,8 @@ func buildBaseline(group1, group2 []string, mixedStorage bool) func(rng *rand.Ra
 // genuinely high-cardinality (per-event), matching real API-gateway traffic.
 func buildKongAPIRequest(rng *rand.Rand) map[string]any {
 	statuses := []string{"200", "200", "200", "201", "400", "404", "500"} // skewed to 200
+	routeID := boundedID(rng, routePool)
+	serviceID := boundedID(rng, servicePool)
 	return map[string]any{
 		"api_id":                 boundedID(rng, apiPool),
 		"api_product_id":         boundedID(rng, apiProdPool),
@@ -236,10 +265,10 @@ func buildKongAPIRequest(rng *rand.Rand) map[string]any {
 		"request_uri":            fmt.Sprintf("/v1/%s/%d", pick(rng, []string{"chat", "llm", "users", "orders", "search"}), rng.IntN(10000)), // high-card
 		"request_user_agent":     pick(rng, []string{"curl/8.4", "Mozilla/5.0", "PostmanRuntime/7.36", "python-requests/2.31", "Go-http-client/2.0", "okhttp/4.12"}),
 		"response_http_status":   pick(rng, statuses),
-		"route_id":               boundedID(rng, routePool),
-		"route_name":             pick(rng, []string{"llm-route", "chat-route", "health-route", "orders-route", "search-route"}),
-		"service_id":             boundedID(rng, servicePool),
-		"service_name":           pick(rng, []string{"ai-service", "auth-service", "billing-service", "orders-service"}),
+		"route_id":               routeID,
+		"route_name":             labelFor(routeID, routePool, routeNames),
+		"service_id":             serviceID,
+		"service_name":           labelFor(serviceID, servicePool, serviceNames),
 		"service_port":           pick(rng, []string{"80", "443", "8080"}),
 		"service_protocol":       pick(rng, []string{"http", "https"}),
 		"upstream_status":        pick(rng, statuses),
@@ -286,29 +315,18 @@ func buildAgentRun(rng *rand.Rand) map[string]any {
 	}
 }
 
-// eventRow is one fully-realized event ready to Append. Both Data and DataMap
-// are populated from the same payload; the writer Appends whichever matches
-// the table's `data` column type (see resolveDataFormat).
+// eventRow is one fully-realized event ready to Append. Data is the JSON-text
+// payload the writer Appends into the `data` column (`data JSON` or `data String`).
 type eventRow struct {
-	ID         string            // user-provided idempotency id
-	Namespace  string            // tenant namespace
-	Type       string            // event type / type column
-	Subject    string            // subject column
-	Time       time.Time         // event time
-	Data       string            // JSON-encoded payload (for `data JSON` / `data String`)
-	DataMap    map[string]string // flat key→string-value payload (for `data Map(String,String)`)
-	StoreRowID string            // OpenMeter-controlled ULID
-	StoredAt   time.Time         // persist time
+	ID         string    // user-provided idempotency id
+	Namespace  string    // tenant namespace
+	Type       string    // event type / type column
+	Subject    string    // subject column
+	Time       time.Time // event time
+	Data       string    // JSON-encoded payload
+	StoreRowID string    // OpenMeter-controlled ULID
+	StoredAt   time.Time // persist time
 }
-
-// dataFormat names which physical encoding the writer Appends for the `data`
-// column. Detected once per Run from system.columns.
-type dataFormat int
-
-const (
-	dataFormatJSONText dataFormat = iota // `data JSON` or `data String` — Append the JSON text
-	dataFormatMap                        // `data Map(String, String)` — Append the flat map
-)
 
 // genCtx holds the precomputed, seed-independent inputs genEvent needs so they
 // are built once per Run, not per event.
@@ -326,12 +344,6 @@ type genCtx struct {
 // function of (cfg.Seed, idx): each event draws from its own PCG stream seeded
 // by (Seed, idx), so the stream is reproducible run-to-run for a given seed.
 // Draw order: time, type-pick, payload, subject, id, store_row_id.
-//
-// Both Data (JSON text) and DataMap (flat string→string) are populated from
-// the same payload, so the JSON-text and Map encodings are byte-for-byte
-// equivalent at the value level: dataMap[k] is the text-form value json.Marshal
-// would have produced for payload[k]. The writer picks one or the other based
-// on the table's data column type.
 func (g *genCtx) genEvent(idx int) eventRow {
 	rng := rand.New(rand.NewPCG(g.cfg.Seed, uint64(idx)))
 	t := g.timeStart.Add(time.Duration(rng.Int64N(g.spanNanos)))
@@ -355,32 +367,9 @@ func (g *genCtx) genEvent(idx int) eventRow {
 		Subject:    subject,
 		Time:       t,
 		Data:       string(data),
-		DataMap:    flattenToStringMap(payload),
 		StoreRowID: srid,
 		StoredAt:   t,
 	}
-}
-
-// flattenToStringMap converts a BuildData payload to a flat string→string map.
-// Each value is rendered by json.Marshal then unquoted (for strings) or kept
-// as the JSON literal (for numbers/bools), so the Map encoding stores the same
-// text the JSON path-extract would return for that field. Top-level only —
-// nested objects are not flattened (the seeder doesn't emit nested payloads,
-// asserted by TestSeedNoNestedPayloads).
-func flattenToStringMap(payload map[string]any) map[string]string {
-	out := make(map[string]string, len(payload))
-	for k, v := range payload {
-		switch x := v.(type) {
-		case string:
-			out[k] = x
-		default:
-			// Numbers, bools, etc.: render via JSON so the text matches what
-			// JSON_VALUE / typed-subcolumn access would extract from data JSON.
-			b, _ := json.Marshal(v)
-			out[k] = string(b)
-		}
-	}
-	return out
 }
 
 // withMixedBaseline returns a copy of types with the "api_request" entry's
@@ -431,10 +420,6 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 		cfg.EventTypes = withMixedBaseline(cfg.EventTypes, cfg.Group1, cfg.Group2)
 	}
 
-	format, err := resolveDataFormat(ctx, conn, cfg.Table)
-	if err != nil {
-		return Result{}, fmt.Errorf("seed: resolve data column format: %w", err)
-	}
 	// Cumulative-weight table for weighted type selection, built once.
 	cumWeights := make([]int, len(cfg.EventTypes))
 	totalWeight := 0
@@ -493,13 +478,6 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 
 		for i := 0; i < batchSize; i++ {
 			row := g.genEvent(inserted + i)
-			var dataCol any
-			switch format {
-			case dataFormatMap:
-				dataCol = row.DataMap
-			default:
-				dataCol = row.Data
-			}
 			err := batch.Append(
 				row.Namespace,    // namespace
 				row.ID,           // id
@@ -507,7 +485,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 				row.Subject,      // subject
 				"bench-seed",     // source
 				row.Time,         // time
-				dataCol,          // data (JSON-text or Map per detected format)
+				row.Data,         // data (JSON text)
 				row.StoredAt,     // ingested_at (tracks stored_at)
 				row.StoredAt,     // stored_at
 				row.StoreRowID,   // store_row_id
@@ -530,27 +508,6 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 		BatchSize:       cfg.BatchSize,
 		AsyncInsert:     cfg.AsyncInsert,
 	}, nil
-}
-
-// resolveDataFormat inspects the live <table>.data column and picks an
-// encoding for the writer to use. JSON / String → JSON text; Map(...) → flat
-// map. The scenario's init.sql is the single source of truth for the column
-// type, so adding a new physical layout means a new init.sql and no harness
-// change.
-func resolveDataFormat(ctx context.Context, conn driver.Conn, table string) (dataFormat, error) {
-	var colType string
-	const q = `SELECT type FROM system.columns WHERE database = currentDatabase() AND table = ? AND name = 'data'`
-	if err := conn.QueryRow(ctx, q, table).Scan(&colType); err != nil {
-		return 0, fmt.Errorf("probe %s.data type: %w", table, err)
-	}
-	switch {
-	case colType == "JSON" || colType == "String":
-		return dataFormatJSONText, nil
-	case len(colType) >= 4 && colType[:4] == "Map(":
-		return dataFormatMap, nil
-	default:
-		return 0, fmt.Errorf("unsupported %s.data type %q (expected JSON, String, or Map(...))", table, colType)
-	}
 }
 
 // Subjects returns the deterministic subject pool for the given size.

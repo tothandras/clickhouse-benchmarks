@@ -41,3 +41,6 @@ __pycache__/
 
 # generated prod benchmark queries (embed real customer org/subject IDs)
 scenarios-prod/
+
+# scratch bench run logs (per-invocation stdout; results live in <scenario>/*.json|md)
+bench/results/run-*.log

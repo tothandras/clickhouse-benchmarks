@@ -12,7 +12,7 @@ FROM
     AND time < if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR)
     AND if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR) < toStartOfHour(toDateTime({to:DateTime}))
   UNION ALL
-  SELECT ifNull(countMerge(cnt), 0) AS value
+  SELECT ifNull(countMerge(value), 0) AS value
   FROM proposal_api_request_rollup
   WHERE window_start >= if(toDateTime({from:DateTime}) = toStartOfHour(toDateTime({from:DateTime})), toDateTime({from:DateTime}), toStartOfHour(toDateTime({from:DateTime})) + INTERVAL 1 HOUR)
     AND window_start < toStartOfHour(toDateTime({to:DateTime}))
