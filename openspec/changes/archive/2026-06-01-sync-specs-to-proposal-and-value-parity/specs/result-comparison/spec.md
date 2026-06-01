@@ -1,9 +1,5 @@
-# result-comparison Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define a harness command that reads the latest result file from each of two scenarios and emits the per-query delta table the README currently maintains by hand. Generating the comparison removes a class of transcription error and makes re-running a head-to-head cheap, while clearly marking queries present in only one side rather than silently dropping them.
-## Requirements
 ### Requirement: Scenario comparison command
 
 The harness SHALL provide a command that reads the latest result file from each
@@ -30,4 +26,3 @@ values.
 #### Scenario: Value-parity table emitted alongside the deltas
 - **WHEN** both result files carry value-parity digests over an identical window
 - **THEN** the command additionally prints a per-query MATCH/DIFFERS table from the digests and exits non-zero if any query's values differ; when the windows differ or a run predates digest capture, it prints an explicit skip message instead
-

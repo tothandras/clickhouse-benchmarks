@@ -1,9 +1,5 @@
-# cache-state-control Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define the harness's ability to measure a query against a known filesystem-cache state — warm (default) or cold — and to record which state each measurement used. Cold-cache mode exposes the real I/O cost that a warm page cache hides, the regime in which the `bloom_filter` skip index and `ZSTD` column compression produce their claimed wins, so warm and cold numbers are never silently compared.
-## Requirements
 ### Requirement: Cold-cache measurement axis
 
 The harness SHALL support measuring a query with the ClickHouse filesystem cache
@@ -26,4 +22,3 @@ SHALL remain the default so existing result files stay comparable.
 #### Scenario: Warm is the default and is recorded
 - **WHEN** the harness runs without `--cold-paired`
 - **THEN** queries run against the warm page cache as before and each result entry records `cache_state = "warm"`, so older result files (which predate the field) and new ones are distinguishable
-

@@ -1,7 +1,15 @@
 # cpu-profiling Specification
 
 ## Purpose
-TBD - created by archiving change cpu-aware-benchmark-and-find-optimal-table. Update Purpose after archive.
+
+Define how the harness captures per-query CPU and memory from ClickHouse's
+`system.query_log` alongside the latency/throughput it already records, so
+table-design experiments can be ranked by true server-side CPU cost rather than
+wall-clock alone. CPU is correlated to a specific measured query via a unique
+`log_comment` carrying the run's sweep id, prefers the OS thread-CPU counter and
+falls back to summed thread wall-time when that counter is unavailable, and
+degrades gracefully (fields null, one warning) when `query_log` is absent.
+
 ## Requirements
 ### Requirement: Per-query CPU and memory capture
 
