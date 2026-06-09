@@ -21,7 +21,7 @@ Billed-shape cost SHALL price the measure window as `compute_units × window_hou
 - **THEN** insert + merge + query + idle_floor equals the window cost within rounding
 
 ### Requirement: Unit-cost card
-A cogs result SHALL include: $/1M events ingested with insert and merge shares; $/1k queries per query class split warm/cold; settled bytes/event with the implied $/1M-events-month storage cost (including the configured backup multiplier, marked estimate); an egress estimate derived from result bytes (marked estimate); and the idle-floor $/service-month bound shown next to the measured idle share.
+A cogs result SHALL include: $/1M events ingested with insert and merge shares; $/1k queries per query class split warm/cold; settled bytes/event with the implied $/1M-events-month storage cost (including the configured backup multiplier, marked estimate); an egress estimate derived from result bytes (marked estimate; an uncompressed upper bound — Cloud bills compressed transfer); and the idle-floor $/service-month bound shown next to the measured idle share.
 
 #### Scenario: complete card
 - **WHEN** a mixed cell completes

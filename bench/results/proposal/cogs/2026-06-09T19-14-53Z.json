@@ -1702,7 +1702,16 @@
       "idle_floor_usd_per_service_month": 653.7149999999999
     }
   },
-  "reconciliation": null,
+  "reconciliation": {
+    "billed_compute_unit_hours": 0.41364007506921185,
+    "model_compute_unit_hours": 3.0003214625,
+    "delta_pct": 625.3459331758353,
+    "billed_storage_tb": 0,
+    "model_storage_tb": 0.005865049512,
+    "storage_delta_pct": 0,
+    "flagged": true,
+    "granularity": "24h0m0s"
+  },
   "flags": {
     "log_flush": "cluster",
     "cpu_source": "os_cpu",
