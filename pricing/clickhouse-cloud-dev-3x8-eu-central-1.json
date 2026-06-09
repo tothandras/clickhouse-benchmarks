@@ -1,0 +1,19 @@
+{
+  "name": "clickhouse-cloud-dev-3x8-eu-central-1",
+  "currency": "USD",
+  "service": {
+    "replicas": 3,
+    "gib_per_replica": 8,
+    "vcpus_per_replica": 2,
+    "gib_per_compute_unit": 8
+  },
+  "rates": {
+    "compute_unit_hour": 0.2985,
+    "storage_tb_month": 25.30,
+    "backup_multiplier": 1.0,
+    "egress_per_gb_public": 0.1152,
+    "clickpipes": null
+  },
+  "as_of": "2026-06-09",
+  "source": "https://clickhouse.com/pricing (Scale rate copied from us-east-1; verify eu-central-1 rate before billing-grade runs)"
+}

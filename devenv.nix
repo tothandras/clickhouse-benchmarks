@@ -22,8 +22,7 @@
 
   languages.javascript = {
     enable = true;
-    package = pkgs.nodejs_24;
-    corepack.enable = true;
+    package = pkgs.nodejs-slim_25;
     pnpm.enable = true;
   };
 
@@ -56,9 +55,16 @@
         partition_by: toYYYYMM(event_date)
         flush_interval_milliseconds: 1000
     '';
+    usersConfig.users.default = {
+      profile = "default";
+      networks.ip = "::/0";
+      quota = "default";
+    };
   };
 
   cachix.enable = false;
+
+  dotenv.enable = true;
 
   # Generates .devcontainer.json from this devenv configuration.
   # https://devenv.sh/integrations/codespaces-devcontainer/
@@ -103,11 +109,38 @@
         done
         [ "$missing" = "0" ] && exit 0
         for source in $(jq -r '.skills | to_entries[] | .value.source' skills-lock.json | sort -u); do
-          pnpm dlx skills@latest add "$source" --agent claude-code -y
+          pnpm dlx skills@1.5.9 add "$source" --agent claude-code -y
         done
       '';
       after = [ "node:install" ];
       before = [ "devenv:enterShell" ];
+    };
+
+    # COGS smoke: run the idle and mixed cells with short (ci) phases and zero
+    # rates against the devenv ClickHouse, then assert valid cogs/v1 results.
+    # Manual: `devenv tasks run cogs:smoke` (needs `devenv up` ClickHouse).
+    # ~13 minutes (two cells x 2m soak + 3m measure + 1m drain + collection).
+    "cogs:smoke" = {
+      exec = ''
+        set -euo pipefail
+        cd "$DEVENV_ROOT"
+        export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9000/default"
+        out=$(mktemp -d)
+        go run ./bench/cmd/bench cogs --cell idle --profile ci --pricing-profile local-zero --preload-rows 0 --results-dir "$out"
+        go run ./bench/cmd/bench cogs --cell mixed-5keps-4qps --profile ci --pricing-profile local-zero --preload-rows 500000 --results-dir "$out"
+        for f in "$out"/proposal/cogs/*.json; do
+          jq -e '.kind == "cogs/v1" and (.errors | length == 0)' "$f" >/dev/null \
+            || { echo "FAIL: invalid result or errors recorded: $f"; exit 1; }
+        done
+        latest=$(ls "$out"/proposal/cogs/*.json | tail -1)
+        jq -e '.attribution.coverage > 0
+               and .attribution.insert_cpu_sec > 0
+               and .attribution.merge_cpu_sec > 0
+               and (.attribution.query_cpu_sec | length > 0)
+               and (.costs.billed_shape.window_usd // 0) == 0' "$latest" >/dev/null \
+          || { echo "FAIL: mixed cell must attribute insert+merge+query CPU at zero rates: $latest"; exit 1; }
+        echo "cogs:smoke PASS ($out)"
+      '';
     };
   };
 

@@ -54,6 +54,7 @@ type Config struct {
 	Group2    []string      // Categorical group2 values (baseline api_request payload).
 	EventTypes []EventType  // Weighted catalog of event types; each emits its own data shape.
 	Rows      int           // Count of events to insert.
+	StartRow  int           // First generator index; Run emits [StartRow, StartRow+Rows). Lets N workers seed disjoint ranges in parallel with full determinism.
 	TimeSpan  time.Duration // Time window the events span, ending at TimeEnd.
 	TimeEnd   time.Time     // Newest event time; events are uniform in [TimeEnd-TimeSpan, TimeEnd).
 	Seed      uint64        // RNG seed for reproducibility.
@@ -315,9 +316,9 @@ func buildAgentRun(rng *rand.Rand) map[string]any {
 	}
 }
 
-// eventRow is one fully-realized event ready to Append. Data is the JSON-text
+// Event is one fully-realized event ready to insert. Data is the JSON-text
 // payload the writer Appends into the `data` column (`data JSON` or `data String`).
-type eventRow struct {
+type Event struct {
 	ID         string    // user-provided idempotency id
 	Namespace  string    // tenant namespace
 	Type       string    // event type / type column
@@ -340,13 +341,73 @@ type genCtx struct {
 	spanNanos   int64
 }
 
+// newGenCtx validates the generation-relevant parts of cfg and builds the
+// per-index generation context. Insert-side concerns (Table, Rows, BatchSize)
+// are validated by Run, not here, so a streaming Generator can be built
+// without them.
+func newGenCtx(cfg Config) (*genCtx, error) {
+	if len(cfg.Types) == 0 || cfg.Subjects <= 0 || len(cfg.Group1) == 0 || len(cfg.Group2) == 0 {
+		return nil, fmt.Errorf("seed: Types, Subjects, Group1, Group2 must be non-empty")
+	}
+	if len(cfg.EventTypes) == 0 {
+		return nil, fmt.Errorf("seed: EventTypes must be non-empty")
+	}
+	if cfg.TimeSpan <= 0 {
+		return nil, fmt.Errorf("seed: TimeSpan must be > 0")
+	}
+
+	// When mixed value-storage is requested, rebuild the baseline (api_request)
+	// builder so `value` is emitted in mixed JSON storage. Matched by name so it
+	// works regardless of catalog order or a custom catalog.
+	if cfg.MixedValueStorage {
+		cfg.EventTypes = withMixedBaseline(cfg.EventTypes, cfg.Group1, cfg.Group2)
+	}
+
+	cumWeights := make([]int, len(cfg.EventTypes))
+	totalWeight := 0
+	for i, et := range cfg.EventTypes {
+		if et.Weight <= 0 || et.BuildData == nil {
+			return nil, fmt.Errorf("seed: EventType %q needs Weight > 0 and a BuildData fn", et.Name)
+		}
+		totalWeight += et.Weight
+		cumWeights[i] = totalWeight
+	}
+
+	return &genCtx{
+		cfg:         cfg,
+		subjects:    Subjects(cfg.Subjects),
+		namespaces:  NamespaceList(cfg.Namespace, cfg.Namespaces),
+		cumWeights:  cumWeights,
+		totalWeight: totalWeight,
+		timeStart:   cfg.TimeEnd.Add(-cfg.TimeSpan),
+		spanNanos:   cfg.TimeSpan.Nanoseconds(),
+	}, nil
+}
+
 // genEvent deterministically materializes the event at index idx. It is a PURE
 // function of (cfg.Seed, idx): each event draws from its own PCG stream seeded
 // by (Seed, idx), so the stream is reproducible run-to-run for a given seed.
 // Draw order: time, type-pick, payload, subject, id, store_row_id.
-func (g *genCtx) genEvent(idx int) eventRow {
+func (g *genCtx) genEvent(idx int) Event {
+	return g.genEventTime(idx, time.Time{}, false)
+}
+
+// genEventAt materializes the event at idx with its event time overridden to t
+// (live-ingest mode). The stream's own time draw is still performed and
+// discarded, so every subsequent draw — type, payload, subject, id — stays
+// byte-identical to the seeder's event at the same (Seed, idx). Only the
+// time-derived fields differ: Time, StoredAt, and the store_row_id's
+// millisecond timestamp prefix (its entropy comes from the unchanged stream).
+func (g *genCtx) genEventAt(idx int, t time.Time) Event {
+	return g.genEventTime(idx, t, true)
+}
+
+func (g *genCtx) genEventTime(idx int, overrideTime time.Time, override bool) Event {
 	rng := rand.New(rand.NewPCG(g.cfg.Seed, uint64(idx)))
 	t := g.timeStart.Add(time.Duration(rng.Int64N(g.spanNanos)))
+	if override {
+		t = overrideTime
+	}
 	et := selectEventType(rng, g.cfg.EventTypes, g.cumWeights, g.totalWeight)
 	payload := et.BuildData(rng)
 	data, _ := json.Marshal(payload)
@@ -360,7 +421,7 @@ func (g *genCtx) genEvent(idx int) eventRow {
 	if len(g.namespaces) > 1 {
 		namespace = g.namespaces[rng.IntN(len(g.namespaces))]
 	}
-	return eventRow{
+	return Event{
 		ID:         id,
 		Namespace:  namespace,
 		Type:       et.Name,
@@ -386,6 +447,54 @@ func withMixedBaseline(types []EventType, group1, group2 []string) []EventType {
 	return out
 }
 
+// Generator streams the seeder's deterministic events one at a time. It is a
+// thin cursor over the same pure per-index generation Run uses, so a Generator
+// and the bulk seeder produce byte-identical events for identical Config.
+// Not safe for concurrent use; give each goroutine its own Generator.
+type Generator struct {
+	ctx *genCtx
+	idx int
+}
+
+// NewGenerator validates the generation-relevant parts of cfg (Table, Rows,
+// and BatchSize are insert-side concerns and may be zero) and returns a
+// streaming generator positioned at index 0.
+func NewGenerator(cfg Config) (*Generator, error) {
+	ctx, err := newGenCtx(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Generator{ctx: ctx}, nil
+}
+
+// Next returns the event at the cursor and advances it.
+func (g *Generator) Next() Event {
+	e := g.ctx.genEvent(g.idx)
+	g.idx++
+	return e
+}
+
+// NextAt returns the event at the cursor with its event time overridden to t
+// (live-ingest mode; see genEventAt for the determinism contract) and
+// advances the cursor.
+func (g *Generator) NextAt(t time.Time) Event {
+	e := g.ctx.genEventAt(g.idx, t)
+	g.idx++
+	return e
+}
+
+// At returns the event at idx without moving the cursor (pure indexed access).
+func (g *Generator) At(idx int) Event {
+	return g.ctx.genEvent(idx)
+}
+
+// Index reports the cursor position (the index Next/NextAt will emit next).
+func (g *Generator) Index() int { return g.idx }
+
+// Seek moves the cursor so Next/NextAt emit from idx onward. Combined with
+// disjoint ranges this lets parallel workers split a seed deterministically.
+func (g *Generator) Seek(idx int) { g.idx = idx }
+
 // Result reports what the seeder did.
 type Result struct {
 	Rows            int // total rows inserted
@@ -406,46 +515,15 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 	if cfg.Table == "" {
 		return Result{}, fmt.Errorf("seed: Table must be set")
 	}
-	if len(cfg.Types) == 0 || cfg.Subjects <= 0 || len(cfg.Group1) == 0 || len(cfg.Group2) == 0 {
-		return Result{}, fmt.Errorf("seed: Types, Subjects, Group1, Group2 must be non-empty")
-	}
-	if len(cfg.EventTypes) == 0 {
-		return Result{}, fmt.Errorf("seed: EventTypes must be non-empty")
-	}
 
-	// When mixed value-storage is requested, rebuild the baseline (api_request)
-	// builder so `value` is emitted in mixed JSON storage. Matched by name so it
-	// works regardless of catalog order or a custom catalog.
-	if cfg.MixedValueStorage {
-		cfg.EventTypes = withMixedBaseline(cfg.EventTypes, cfg.Group1, cfg.Group2)
+	if cfg.StartRow < 0 {
+		return Result{}, fmt.Errorf("seed: StartRow must be >= 0")
 	}
-
-	// Cumulative-weight table for weighted type selection, built once.
-	cumWeights := make([]int, len(cfg.EventTypes))
-	totalWeight := 0
-	for i, et := range cfg.EventTypes {
-		if et.Weight <= 0 || et.BuildData == nil {
-			return Result{}, fmt.Errorf("seed: EventType %q needs Weight > 0 and a BuildData fn", et.Name)
-		}
-		totalWeight += et.Weight
-		cumWeights[i] = totalWeight
+	gen, err := NewGenerator(cfg)
+	if err != nil {
+		return Result{}, err
 	}
-
-	subjects := make([]string, cfg.Subjects)
-	for i := range subjects {
-		subjects[i] = fmt.Sprintf("subject-%05d", i)
-	}
-
-	timeStart := cfg.TimeEnd.Add(-cfg.TimeSpan)
-	g := &genCtx{
-		cfg:         cfg,
-		subjects:    subjects,
-		namespaces:  NamespaceList(cfg.Namespace, cfg.Namespaces),
-		cumWeights:  cumWeights,
-		totalWeight: totalWeight,
-		timeStart:   timeStart,
-		spanNanos:   cfg.TimeSpan.Nanoseconds(),
-	}
+	gen.Seek(cfg.StartRow)
 	start := time.Now()
 
 	// Build the SETTINGS-aware INSERT statement once.
@@ -476,8 +554,8 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) (Result, error) {
 			return Result{}, fmt.Errorf("seed: PrepareBatch: %w", err)
 		}
 
-		for i := 0; i < batchSize; i++ {
-			row := g.genEvent(inserted + i)
+		for range batchSize {
+			row := gen.Next()
 			err := batch.Append(
 				row.Namespace,    // namespace
 				row.ID,           // id

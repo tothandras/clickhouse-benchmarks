@@ -59,6 +59,113 @@ openspec validate <change>    # check it
 openspec archive <change>     # land it after implementation
 ```
 
+## Measuring COGS
+
+`bench cogs` measures what the OpenMeter ClickHouse workload *costs* — the
+question the perf tables imply but cannot state. It runs workload cells
+(`cells/*.json`: paced ingest + weighted query replay) against a service,
+attributes resource consumption to `{insert, merge, query, idle}` from system
+tables, prices it with a checked-in pricing profile (`pricing/*.json`), and
+writes a unit-cost card per run. See `bench/README.md` for the CLI.
+
+```bash
+# Smoke (devenv ClickHouse, zero rates, short phases):
+bench cogs --cell mixed-5keps-4qps --profile ci --pricing-profile local-zero --preload-rows 500000
+
+# Real measurement (dedicated ClickHouse Cloud service, pinned autoscaling):
+bench cogs --cell ingest-5k
+bench cogs --cell query-4qps --skip-init
+bench cogs compare bench/results/proposal/cogs/<a>.json bench/results/proposal/cogs/<b>.json
+bench cogs validate <ingest-only.json> <query-only.json> <mixed.json>
+```
+
+### Methodology
+
+- **Merge lag.** Merges run after inserts; the drain phase (default 15m)
+  catches merges triggered by measure-window inserts and books them to ingest.
+  Symmetrically, soak-triggered merges completing during measure are counted —
+  at steady state the two leakages net out, which is why the soak phase exists
+  (its gate: active part count stable ±10% over 5 polls; `parts_plateau:
+  false` in the result means steady state was not reached, treat $/1M-events
+  with suspicion).
+- **Multi-replica accounting.** `system.query_log`/`system.part_log` are
+  per-replica and Cloud load-balances connections, so all collectors read
+  `clusterAllReplicas(default, ...)` and flush logs cluster-wide. Available
+  CPU = reachable replicas × per-replica vCPUs (cgroup limit, falling back to
+  `max_threads`).
+- **Live event time.** The ingest driver stamps wall-clock event times
+  (payloads stay deterministic per seed); the replayer binds a sliding
+  `[now-3d, now)` window per arrival, so queries scan fresh data as it lands
+  and scan size stays stationary.
+- **Cache state.** A configurable fraction of replayed queries runs with
+  `enable_filesystem_cache=0` and is costed separately (`warm`/`cold`).
+- **`max_threads`** and any other per-query settings come from the cell
+  manifest and are recorded in the result; don't compare runs with different
+  settings.
+- **Idle cell semantics.** The `idle` cell measures the *awake-but-unloaded*
+  floor. It does not measure Cloud idling behavior: the harness's own polling
+  keeps the service awake, and idling economics need the usage export.
+- **Dedicated service required.** Foreign databases mean foreign merges and
+  queries polluting coverage; the runner warns (`foreign_databases` flag).
+- **Do not extrapolate across tiers/shapes.** Costs are priced on the pinned
+  service shape in the pricing profile; a different tier has different rates
+  AND different cache/memory behavior. The runner flags `shape_mismatch` when
+  the detected shape differs from the profile.
+- **Reconciliation deltas** (`--usage-export` at run time or `bench cogs
+  reconcile` afterwards; >20% flags the run): expected causes are autoscaling
+  movement during the window, a shared service, system background work,
+  idling between phases — and, with the Cloud usage-statement CSV, its daily
+  granularity: pro-rating a sub-day measure window out of a daily dollar
+  total assumes uniform usage, so statement-based reconciliation is
+  indicative unless the cell spans most of the day.
+- **Two prices, always.** `billed_shape` reconciles with the invoice (window
+  cost split by CPU shares; the remainder is the idle floor — at low
+  utilization the floor dominates, which is the point). `cpu_linear` is the
+  marginal cost on an already-busy service. When the detected capacity matches
+  the profile shape the per-component figures coincide; the difference is the
+  idle floor.
+
+### First measurement: 100M events on ClickHouse Cloud (2026-06-09)
+
+`mixed-5keps-4qps` against a dedicated 3-replica × 8 GiB / 2 vCPU Scale
+service (eu-central-1, 3 compute units): 100M preloaded events, 30m soak
+(parts plateau reached), 1h measure with 5k events/sec live ingest (achieved
+4996, rate satisfied) + 4 qps production-mix replay (achieved 4.01, zero
+queue pressure), 15m drain. Zero harness errors; cluster-wide log flush and
+native merge ProfileEvents on Cloud (no estimation fallbacks). Result:
+`bench/results/proposal/cogs/2026-06-09T19-14-53Z.{json,md}`.
+
+| Unit cost (billed-shape) | Value |
+| --- | --- |
+| $ / 1M events ingested | **$0.0013** — insert 22% / **merge 78%** |
+| $ / 1k queries: meter_agg | $0.0049 warm / $0.0085 cold |
+| $ / 1k queries: payload_heavy | $0.0052 warm / $0.0102 cold |
+| $ / 1k queries: key_only | $0.0036 warm / $0.0065 cold |
+| $ / 1k queries: lookup | $0.0133 warm / $0.0227 cold |
+| Storage (53.4 bytes/event settled) | $0.00135 / 1M events / month |
+| Idle floor (this shape, 100%-active bound) | $654 / month |
+
+CPU attribution over the 1h window (6 vCPUs × 3600s = 21,602 available
+cpu-seconds, coverage 11.2%): insert 128s, merge 441s, queries 1,840s, idle
+remainder. Window cost $0.896, of which $0.796 was idle floor.
+
+**Findings:**
+
+1. **Merges are 3.4× the insert CPU** — 78% of the ingest-path cost lives in
+   background merges, which `system.query_log` structurally cannot see. Any
+   per-event cost model derived from insert timings alone undercounts ~4.5×.
+2. **The idle floor dominates at this scale.** 5k events/sec + 4 qps consumed
+   ~$0.10/h of an $0.90/h window: the service was 89% idle. Utilization
+   (consolidation, idling) is the COGS lever here, not query optimization.
+3. **Cold queries cost ~1.7–2× warm** across every class — the filesystem
+   cache is worth roughly half the query bill.
+
+Caveats attached to this run: mix weights are placeholders (flagged in the
+report), the eu-central-1 rate in the pricing profile is copied from
+us-east-1 pending calibration against the usage statement, and reconciliation
+awaits a statement that covers the run window (the daily-granularity CSV
+makes sub-day reconciliation indicative either way).
+
 ## 10M Benchmark Evaluation
 
 Head-to-head evaluation of the two table designs on an identical workload.

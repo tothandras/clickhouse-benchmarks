@@ -5,30 +5,20 @@ import (
 	"testing"
 )
 
-// newGenCtx builds the same genCtx Run uses, so tests exercise the real
-// per-index generation path without a ClickHouse connection.
-func newGenCtx(cfg Config) *genCtx {
-	cum := make([]int, len(cfg.EventTypes))
-	total := 0
-	for i, et := range cfg.EventTypes {
-		total += et.Weight
-		cum[i] = total
+// mustGenCtx builds the validated genCtx Run and Generator use, so tests
+// exercise the real per-index generation path without a ClickHouse connection.
+func mustGenCtx(cfg Config) *genCtx {
+	g, err := newGenCtx(cfg)
+	if err != nil {
+		panic(err)
 	}
-	return &genCtx{
-		cfg:         cfg,
-		subjects:    Subjects(cfg.Subjects),
-		namespaces:  NamespaceList(cfg.Namespace, cfg.Namespaces),
-		cumWeights:  cum,
-		totalWeight: total,
-		timeStart:   cfg.TimeEnd.Add(-cfg.TimeSpan),
-		spanNanos:   cfg.TimeSpan.Nanoseconds(),
-	}
+	return g
 }
 
 // genTypesAndData reproduces Run's per-index generation for n rows so we can
 // assert mix/determinism without a ClickHouse connection.
 func genTypesAndData(cfg Config, n int) ([]string, []string) {
-	g := newGenCtx(cfg)
+	g := mustGenCtx(cfg)
 	types := make([]string, n)
 	datas := make([]string, n)
 	for i := 0; i < n; i++ {
@@ -57,7 +47,7 @@ func TestSeedDeterministic(t *testing.T) {
 func TestSeedNamespaceDistribution(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Namespaces = 5
-	g := newGenCtx(cfg)
+	g := mustGenCtx(cfg)
 	const n = 50_000
 
 	counts := map[string]int{}
@@ -74,7 +64,7 @@ func TestSeedNamespaceDistribution(t *testing.T) {
 		t.Errorf("primary namespace %q never generated", cfg.Namespace)
 	}
 	// Deterministic: a second pass yields identical per-row assignments.
-	g2 := newGenCtx(cfg)
+	g2 := mustGenCtx(cfg)
 	for i := 0; i < n; i++ {
 		if got := g2.genEvent(i).Namespace; got != first[i] {
 			t.Fatalf("row %d namespace not deterministic: %q vs %q", i, got, first[i])
@@ -89,7 +79,7 @@ func TestSeedSingleNamespaceUnchanged(t *testing.T) {
 	a.Namespaces = 0
 	b := DefaultConfig()
 	b.Namespaces = 1
-	ga, gb := newGenCtx(a), newGenCtx(b)
+	ga, gb := mustGenCtx(a), mustGenCtx(b)
 	for i := 0; i < 2000; i++ {
 		ea, eb := ga.genEvent(i), gb.genEvent(i)
 		if ea.Namespace != a.Namespace || eb.Namespace != b.Namespace {
@@ -105,7 +95,7 @@ func TestSeedMixedValueStorage(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MixedValueStorage = true
 	cfg.EventTypes = withMixedBaseline(cfg.EventTypes, cfg.Group1, cfg.Group2)
-	g := newGenCtx(cfg)
+	g := mustGenCtx(cfg)
 
 	var sawNumber, sawString, sawBigint bool
 	for i := 0; i < 20_000 && !(sawNumber && sawString && sawBigint); i++ {
@@ -143,7 +133,7 @@ func TestSeedMixedValueStorage(t *testing.T) {
 	}
 
 	// Default (uniform) config must NOT produce string values — guards the gate.
-	gu := newGenCtx(DefaultConfig())
+	gu := mustGenCtx(DefaultConfig())
 	for i := 0; i < 5_000; i++ {
 		e := gu.genEvent(i)
 		if e.Type != "api_request" {
@@ -190,7 +180,7 @@ func TestSeedWeightedMix(t *testing.T) {
 
 func TestSeedHeterogeneousPayloads(t *testing.T) {
 	cfg := DefaultConfig()
-	g := newGenCtx(cfg)
+	g := mustGenCtx(cfg)
 	// Collect one sample payload per type by scanning indices until every type
 	// has appeared (each index is an independent event via genEvent).
 	samples := map[string]map[string]any{}

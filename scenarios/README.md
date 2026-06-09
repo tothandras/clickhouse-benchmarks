@@ -99,6 +99,38 @@ A future scenario that needs different parameters will introduce a
 per-scenario `params.json` manifest. We deliberately delay that until a second
 variant forces the need, to keep v1 small.
 
+### `queries/mix.json` (cogs replay mixes)
+
+Scenarios that participate in `bench cogs` runs ship a `queries/mix.json`
+declaring named query mixes. The contract is strict by design — adding a query
+file forces a conscious classification decision:
+
+- Every `*.sql` in `queries/` must appear in **exactly one** class or in the
+  mix's `exclude` list; loading fails otherwise, naming the offender.
+- Every name referenced by a class must have a matching `.sql` file.
+- `exclude` is for diagnostic variants that are not production traffic (e.g.
+  the `*_no_prewhere` PREWHERE-comparison queries).
+- Class `weight`s set the per-arrival selection probability; queries within a
+  class are selected uniformly.
+- While weights are placeholders (not measured production frequencies), the
+  mix carries a `notes` field that every cogs report renders as a caveat.
+
+```jsonc
+{
+  "production": {
+    "notes": "weights are placeholders pending measured frequencies",
+    "classes": {
+      "key_only":  { "weight": 10, "queries": ["count_total", "..."] },
+      "meter_agg": { "weight": 70, "queries": ["sum_hour", "..."] }
+    },
+    "exclude": ["sum_hour_group1_no_prewhere"]
+  }
+}
+```
+
+`mix.json` lives inside `queries/` but is invisible to the perf path, whose
+discovery only picks up `*.sql` files.
+
 ## Discovery rules
 
 - The harness walks `scenarios/` to depth 1 and treats every direct

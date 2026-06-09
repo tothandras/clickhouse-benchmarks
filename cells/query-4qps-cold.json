@@ -1,0 +1,18 @@
+{
+  "name": "query-4qps-cold",
+  "scenario": "proposal",
+  "preload_rows": 10000000,
+  "soak": "30m",
+  "measure": "60m",
+  "drain": "15m",
+  "ingest": {
+    "events_per_sec": 0,
+    
+    "async_insert": false,
+    "namespaces": 32,
+    "mixed_value": true,
+    "seed": 42
+  },
+  "query": { "qps": 4, "arrival": "poisson", "mix": "production", "cold_fraction": 1.0, "concurrency_cap": 16, "settings": { "max_threads": 4 } },
+  "pricing_profile": "clickhouse-cloud-scale-aws-us-east-1"
+}

@@ -1,0 +1,54 @@
+{
+  "production": {
+    "notes": "class weights are placeholders shaped like the slow-query-log mapping; replace with measured production frequencies. baseline-openmeter has no lookup_by_id or kong_api_request_by_* queries, so it carries no lookup class; cogs compare reports the class-set difference.",
+    "classes": {
+      "key_only": {
+        "weight": 10,
+        "queries": [
+          "count_total",
+          "count_hour",
+          "agent_runs_by_name",
+          "kong_api_request_total",
+          "distinct_subjects"
+        ]
+      },
+      "meter_agg": {
+        "weight": 70,
+        "queries": [
+          "sum_hour",
+          "sum_day",
+          "sum_month",
+          "sum_total",
+          "sum_total_by_subject",
+          "sum_no_window",
+          "avg_hour",
+          "max_hour",
+          "min_hour",
+          "sum_minute",
+          "sum_hour_tz",
+          "sum_day_by_subject",
+          "unique_count_hour",
+          "latest_hour"
+        ]
+      },
+      "payload_heavy": {
+        "weight": 20,
+        "queries": [
+          "kong_status_by_route",
+          "llm_tokens_by_model",
+          "kong_llm_tokens_total",
+          "sum_day_by_dim",
+          "workload_seconds_by_region",
+          "sum_hour_group1",
+          "sum_hour_group1_group2",
+          "sum_total_filter1",
+          "sum_total_filter2"
+        ]
+      }
+    },
+    "exclude": [
+      "sum_hour_group1_no_prewhere",
+      "sum_hour_group1_group2_no_prewhere"
+    ]
+  }
+}

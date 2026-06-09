@@ -1,0 +1,19 @@
+{
+  "name": "local-zero",
+  "currency": "USD",
+  "service": {
+    "replicas": 1,
+    "gib_per_replica": 16,
+    "vcpus_per_replica": 8,
+    "gib_per_compute_unit": 8
+  },
+  "rates": {
+    "compute_unit_hour": 0,
+    "storage_tb_month": 0,
+    "backup_multiplier": 0,
+    "egress_per_gb_public": 0,
+    "clickpipes": null
+  },
+  "as_of": "2026-06-09",
+  "source": "all-zero rates: pure resource-accounting runs against local/devenv ClickHouse"
+}

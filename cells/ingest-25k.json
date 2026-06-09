@@ -1,0 +1,18 @@
+{
+  "name": "ingest-25k",
+  "scenario": "proposal",
+  "preload_rows": 10000000,
+  "soak": "30m",
+  "measure": "60m",
+  "drain": "15m",
+  "ingest": {
+    "events_per_sec": 25000,
+    "batch_max_rows": 5000, "flush_interval": "1s",
+    "async_insert": false,
+    "namespaces": 32,
+    "mixed_value": true,
+    "seed": 42
+  },
+  "query": { "qps": 0 },
+  "pricing_profile": "clickhouse-cloud-scale-aws-us-east-1"
+}

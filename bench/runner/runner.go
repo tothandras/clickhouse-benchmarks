@@ -95,6 +95,14 @@ func Discover(scenariosDir string, only []string) ([]Scenario, error) {
 	return scenarios, nil
 }
 
+// ScenarioTable derives the table name for a scenario by replacing `-` with
+// `_` and appending `_events`. The scenario directory name is the single
+// source of truth: scenarios/proposal/ → proposal_events. Shared by the perf
+// and cogs paths so they always target the same table.
+func ScenarioTable(name string) string {
+	return strings.ReplaceAll(name, "-", "_") + "_events"
+}
+
 // LoadQueries reads and validates the query files for a scenario.
 // Each file must contain exactly one SELECT statement (multiple statements
 // produce an error logged to stderr and the query is skipped).

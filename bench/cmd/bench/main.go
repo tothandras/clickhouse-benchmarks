@@ -102,7 +102,7 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.skipSeed, "skip-seed", false, "skip seeding (run queries against existing data)")
 	cmd.Flags().StringVar(&f.timeEnd, "time-end", "", "pin seed TimeEnd (RFC3339, e.g. 2026-06-01T00:00:00Z); shared across scenarios so their event time windows are byte-identical. Default: time.Now() truncated to the minute (per-scenario).")
 	cmd.SilenceUsage = true
-	cmd.AddCommand(newCompareCmd())
+	cmd.AddCommand(newCompareCmd(), newCogsCmd())
 	return cmd
 }
 
@@ -547,10 +547,7 @@ func sqlString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-// scenarioTable derives the table name for a scenario by replacing `-` with
-// `_` and appending `_events`. The scenario directory name is the single
-// source of truth: scenarios/proposal/ → proposal_events. Each
-// scenario uses its own table so scenarios coexist without clobbering.
+// scenarioTable derives the table name for a scenario; see runner.ScenarioTable.
 func scenarioTable(name string) string {
-	return strings.ReplaceAll(name, "-", "_") + "_events"
+	return runner.ScenarioTable(name)
 }

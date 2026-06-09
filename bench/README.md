@@ -106,3 +106,52 @@ Scenarios that conform to the baseline OpenMeter event shape (namespace +
 type + subject + JSON `data.value`) work out of the box. A per-scenario
 `params.json` manifest is a future change once a second variant needs
 different bindings.
+
+## COGS runs (`bench cogs`)
+
+The perf path above answers *which design is fastest*; `bench cogs` answers
+*what the workload costs*. It runs one **workload cell** — a steady-rate
+ingest driver (paced, sink-style batching) plus a weighted query replayer —
+through prepare → soak → measure → drain → collect → price → report, and
+writes `bench/results/<scenario>/cogs/<timestamp>.{json,md}` with a unit-cost
+card ($/1M events with insert/merge split, $/1k queries per class warm/cold,
+storage $/GB-month, idle floor). See the top-level README's "Measuring COGS"
+section for the methodology.
+
+| Flag                | Default          | Purpose                                                            |
+| ------------------- | ---------------- | ------------------------------------------------------------------ |
+| `--cell`            | (required)       | Cell name resolved in `--cells-dir`, or a manifest path.           |
+| `--profile`         | (manifest)       | `ci` shortens soak/measure/drain to 2m/3m/1m for smoke runs.       |
+| `--skip-init`       | `false`          | Reuse the existing table and data (skips `init.sql` and preload).  |
+| `--require-clean`   | `false`          | Refuse to run if the harness git tree is dirty.                    |
+| `--cells-dir`       | `cells`          | Where cell manifests live.                                         |
+| `--pricing-dir`     | `pricing`        | Where pricing profiles live.                                       |
+| `--pricing-profile` | (manifest)       | Override the cell's profile (e.g. `local-zero`).                   |
+| `--preload-rows`    | (manifest)       | Override preload size (smoke runs).                                |
+| `--preload-workers` | `4`              | Parallel preload connections (disjoint generator index ranges, deterministic). Remote targets also want `compress=lz4` in the DSN — bulk seeding is usually uplink-bound. |
+| `--usage-export`    | —                | Reconcile against a Cloud usage export (`cogs-usage/v1`).          |
+| `--results-dir`     | `bench/results`  | Where to write result files.                                       |
+| `--scenarios-dir`   | `scenarios`      | Where to discover scenarios.                                       |
+
+Subcommands:
+
+- `bench cogs compare <run-a> <run-b>` — diff two runs' unit costs (args are
+  result paths or scenario names resolving to the latest run). Cross-profile
+  price comparison is refused unless `--allow-profile-mismatch`, which limits
+  the diff to resource lines (CPU sec, bytes/event, coverage).
+- `bench cogs validate <ingest-only> <query-only> <mixed>` — check cpu-linear
+  additivity (±15% per component); PASS means a linear per-tenant COGS formula
+  holds at those rates, FAIL names the interfering component.
+- `bench cogs reconcile <run> <usage-file> [--write]` — after-the-fact
+  reconciliation of a finished run against a Cloud usage export: either
+  `cogs-usage/v1` JSON (interval unit-hours) or the Cloud console's
+  usage-statement CSV (daily dollar rows, converted via the run's pricing
+  profile rate; daily granularity makes sub-day windows indicative only).
+  `--write` embeds the block into the result JSON and regenerates the
+  markdown.
+
+Unlike the perf path, the cogs replayer does NOT shell out to
+`clickhouse-benchmark`: it needs per-query tagging (`log_comment`), weighted
+mixes, and Poisson arrivals, and its latency/CPU source of truth is
+server-side `system.query_log`, so the client-timing-skew argument for
+delegating does not apply.

@@ -1,0 +1,340 @@
+{
+  "kind": "cogs/v1",
+  "run_id": "01JX0000000000000000000000",
+  "cell": {
+    "name": "mixed-5keps-4qps",
+    "scenario": "proposal",
+    "preload_rows": 10000000,
+    "soak": "30m0s",
+    "measure": "1h0m0s",
+    "drain": "15m0s",
+    "ingest": {
+      "events_per_sec": 5000,
+      "batch_max_rows": 5000,
+      "flush_interval": "1s",
+      "namespaces": 32,
+      "mixed_value": true,
+      "seed": 42
+    },
+    "query": {
+      "qps": 4,
+      "arrival": "poisson",
+      "mix": "production",
+      "cold_fraction": 0.1,
+      "concurrency_cap": 16
+    },
+    "pricing_profile": "fixture"
+  },
+  "scenario": "proposal",
+  "harness_commit": "abc1234",
+  "started_at": "2026-06-09T12:00:00Z",
+  "finished_at": "2026-06-09T13:45:00Z",
+  "cluster": {
+    "version": "25.12.1.1606",
+    "is_single_node": false
+  },
+  "pricing_profile": {
+    "name": "fixture",
+    "currency": "USD",
+    "service": {
+      "replicas": 2,
+      "gib_per_replica": 16,
+      "vcpus_per_replica": 4,
+      "gib_per_compute_unit": 8
+    },
+    "rates": {
+      "compute_unit_hour": 0.2985,
+      "storage_tb_month": 25.3,
+      "backup_multiplier": 1,
+      "egress_per_gb_public": 0.1152,
+      "clickpipes": null
+    },
+    "as_of": "",
+    "source": ""
+  },
+  "phases": {
+    "soak": {
+      "start": "2026-06-09T12:00:00Z",
+      "end": "2026-06-09T12:30:00Z",
+      "seconds": 1800
+    },
+    "measure": {
+      "start": "2026-06-09T12:30:00Z",
+      "end": "2026-06-09T13:30:00Z",
+      "seconds": 3600
+    },
+    "drain": {
+      "start": "2026-06-09T13:30:00Z",
+      "end": "2026-06-09T13:45:00Z",
+      "seconds": 900
+    },
+    "parts_plateau": true
+  },
+  "ingest": {
+    "target_eps": 5000,
+    "achieved_eps": 4987,
+    "rate_satisfied": true,
+    "events": 18000000,
+    "batches": 3600,
+    "errors": 0,
+    "insert_p50_ms": 12.5,
+    "insert_p95_ms": 30.1
+  },
+  "replay": {
+    "target_qps": 4,
+    "achieved_qps": 3.98,
+    "per_class": {
+      "key_only": {
+        "issued": 2000,
+        "completed": 2000,
+        "errors": 0,
+        "cold": 0
+      },
+      "meter_agg": {
+        "issued": 13000,
+        "completed": 13000,
+        "errors": 0,
+        "cold": 1000
+      }
+    },
+    "queued_p50_ms": 0.2,
+    "queued_p95_ms": 1.4,
+    "errors": 0
+  },
+  "accounting": {
+    "query_log": {
+      "groups": [
+        {
+          "component": "ingest",
+          "n": 3600,
+          "cpu_sec": 900,
+          "wall_sec": 0,
+          "p50_ms": 0,
+          "p95_ms": 0,
+          "p99_ms": 0,
+          "read_rows": 0,
+          "read_bytes": 0,
+          "written_rows": 18000000,
+          "written_bytes": 0,
+          "result_bytes": 0,
+          "peak_mem_bytes": 0,
+          "s3_get": 0,
+          "fs_cache_read_bytes": 0,
+          "fs_cache_miss_bytes": 0
+        },
+        {
+          "component": "query",
+          "class": "meter_agg",
+          "cache": "warm",
+          "n": 12000,
+          "cpu_sec": 2400,
+          "wall_sec": 0,
+          "p50_ms": 0,
+          "p95_ms": 0,
+          "p99_ms": 0,
+          "read_rows": 0,
+          "read_bytes": 0,
+          "written_rows": 0,
+          "written_bytes": 0,
+          "result_bytes": 1000000000,
+          "peak_mem_bytes": 536870912,
+          "s3_get": 0,
+          "fs_cache_read_bytes": 0,
+          "fs_cache_miss_bytes": 0
+        },
+        {
+          "component": "query",
+          "class": "meter_agg",
+          "cache": "cold",
+          "n": 1000,
+          "cpu_sec": 600,
+          "wall_sec": 0,
+          "p50_ms": 0,
+          "p95_ms": 0,
+          "p99_ms": 0,
+          "read_rows": 0,
+          "read_bytes": 0,
+          "written_rows": 0,
+          "written_bytes": 0,
+          "result_bytes": 200000000,
+          "peak_mem_bytes": 734003200,
+          "s3_get": 0,
+          "fs_cache_read_bytes": 0,
+          "fs_cache_miss_bytes": 0
+        },
+        {
+          "component": "query",
+          "class": "key_only",
+          "cache": "warm",
+          "n": 2000,
+          "cpu_sec": 100,
+          "wall_sec": 0,
+          "p50_ms": 0,
+          "p95_ms": 0,
+          "p99_ms": 0,
+          "read_rows": 0,
+          "read_bytes": 0,
+          "written_rows": 0,
+          "written_bytes": 0,
+          "result_bytes": 50000000,
+          "peak_mem_bytes": 67108864,
+          "s3_get": 0,
+          "fs_cache_read_bytes": 0,
+          "fs_cache_miss_bytes": 0
+        }
+      ],
+      "cpu_source": "os_cpu"
+    },
+    "merges": {
+      "merges": 120,
+      "cpu_sec": 300,
+      "wall_sec": 0,
+      "cpu_estimated": false,
+      "read_rows": 0,
+      "read_bytes": 0,
+      "written_rows": 0,
+      "written_bytes": 0,
+      "peak_mem_bytes": 0,
+      "new_parts": 0,
+      "mutates": 0
+    },
+    "capacity": {
+      "replicas": 2,
+      "vcpus_per_replica": 4,
+      "total_vcpus": 8,
+      "source": "CGroupMaxCPU"
+    },
+    "storage": {
+      "prepare": {
+        "at": "0001-01-01T00:00:00Z",
+        "rows": 0,
+        "parts": 0,
+        "partitions": 0,
+        "compressed_bytes": 1000000000,
+        "uncompressed_bytes": 0
+      },
+      "soak_end": {
+        "at": "0001-01-01T00:00:00Z",
+        "rows": 0,
+        "parts": 0,
+        "partitions": 0,
+        "compressed_bytes": 0,
+        "uncompressed_bytes": 0
+      },
+      "drain_end": {
+        "at": "0001-01-01T00:00:00Z",
+        "rows": 0,
+        "parts": 0,
+        "partitions": 0,
+        "compressed_bytes": 2188000000,
+        "uncompressed_bytes": 0
+      }
+    },
+    "measure_seconds": 3600,
+    "events_ingested": 18000000
+  },
+  "attribution": {
+    "insert_cpu_sec": 900,
+    "merge_cpu_sec": 300,
+    "query_cpu_sec": {
+      "key_only": {
+        "warm": 100
+      },
+      "meter_agg": {
+        "cold": 600,
+        "warm": 2400
+      }
+    },
+    "query_counts": {
+      "key_only": {
+        "warm": 2000
+      },
+      "meter_agg": {
+        "cold": 1000,
+        "warm": 12000
+      }
+    },
+    "query_peak_mem_bytes": {
+      "key_only": {
+        "warm": 67108864
+      },
+      "meter_agg": {
+        "cold": 734003200,
+        "warm": 536870912
+      }
+    },
+    "total_result_bytes": 1250000000,
+    "available_cpu_sec": 28800,
+    "attributed_cpu_sec": 4300,
+    "coverage": 0.14930555555555555,
+    "idle_cpu_sec": 24500,
+    "bytes_per_event_settled": 66
+  },
+  "costs": {
+    "billed_shape": {
+      "window_usd": 1.194,
+      "insert_usd": 0.0373125,
+      "merge_usd": 0.012437499999999999,
+      "query_usd": {
+        "key_only": {
+          "warm": 0.004145833333333333
+        },
+        "meter_agg": {
+          "cold": 0.024874999999999998,
+          "warm": 0.09949999999999999
+        }
+      },
+      "idle_floor_usd": 1.0157291666666666
+    },
+    "cpu_linear": {
+      "insert_usd": 0.0373125,
+      "merge_usd": 0.012437499999999999,
+      "query_usd": {
+        "key_only": {
+          "warm": 0.004145833333333333
+        },
+        "meter_agg": {
+          "cold": 0.024874999999999998,
+          "warm": 0.09949999999999999
+        }
+      }
+    },
+    "unit": {
+      "usd_per_1m_events": {
+        "billed_shape": 0.0027638888888888886,
+        "cpu_linear": 0.0027638888888888886,
+        "insert_share": 0.75,
+        "merge_share": 0.25
+      },
+      "usd_per_1k_queries": {
+        "key_only": {
+          "warm": {
+            "billed_shape": 0.0020729166666666665,
+            "cpu_linear": 0.0020729166666666665
+          }
+        },
+        "meter_agg": {
+          "cold": {
+            "billed_shape": 0.024874999999999998,
+            "cpu_linear": 0.024874999999999998
+          },
+          "warm": {
+            "billed_shape": 0.008291666666666666,
+            "cpu_linear": 0.008291666666666666
+          }
+        }
+      },
+      "bytes_per_event_settled": 66,
+      "usd_per_1m_events_month_storage": 0.0016698000000000001,
+      "egress_usd_estimate": 0.144,
+      "idle_floor_usd_per_service_month": 871.62
+    }
+  },
+  "reconciliation": null,
+  "flags": {
+    "log_flush": "cluster",
+    "cpu_source": "os_cpu",
+    "mix_notes": "class weights are placeholders; replace with measured production frequencies"
+  },
+  "errors": []
+}
