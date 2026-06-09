@@ -5,7 +5,7 @@ Each subdirectory is one table-design variant for the benchmark use-case.
 Current variants:
 
 - `baseline-openmeter/` — Verbatim reproduction of OpenMeter's `om_events` (`data String`, queried via `JSON_VALUE`). The reference.
-- `proposal/` — **The recommended default.** Combines `data JSON` + `CODEC(ZSTD(3))` + a `bloom_filter` skip index on `id`, queried via native subcolumns. Wins on the metrics that are stable across runs — best p50 and −43% disk; the query-CPU effect of ZSTD is run-variable (see the top-level README's Findings). Includes the full meter-query set plus `lookup_by_id.sql` (so the `id` bloom is exercised) and the extra grouped Kong api variants. See the top-level README's Findings section for the head-to-head numbers.
+- `proposal/` — **The recommended default.** Combines `data JSON` + `CODEC(ZSTD(3))` + a `bloom_filter` skip index on `id`, queried via native subcolumns. Includes the full meter-query set plus `lookup_by_id.sql` (so the `id` bloom is exercised) and the extra grouped Kong api variants. Head-to-head numbers: top-level README, "Results: 10M head-to-head".
 
 Earlier standalone variants (`data-as-json`, `data-as-map`, `order-by-extended-time`, `with-id-bloom`) were folded into `proposal` or retired; see git history to re-measure any lever on your own hardware.
 

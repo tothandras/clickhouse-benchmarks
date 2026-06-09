@@ -17,8 +17,8 @@ than a hand-rolled loop would give us.
 # (the devenv provides both via the `clickhouse` package):
 export CLICKHOUSE_DSN="clickhouse://default:@127.0.0.1:9000/default"
 
-go build -o .devenv/bin/bench ./bench/cmd/bench
-./.devenv/bin/bench --scenario baseline-openmeter
+go build -o bin/bench ./bench/cmd/bench
+./bin/bench --scenario baseline-openmeter
 ```
 
 ## CLI
@@ -115,8 +115,7 @@ ingest driver (paced, sink-style batching) plus a weighted query replayer —
 through prepare → soak → measure → drain → collect → price → report, and
 writes `bench/results/<scenario>/cogs/<timestamp>.{json,md}` with a unit-cost
 card ($/1M events with insert/merge split, $/1k queries per class warm/cold,
-storage $/GB-month, idle floor). See the top-level README's "Measuring COGS"
-section for the methodology.
+storage $/GB-month, idle floor).
 
 | Flag                | Default          | Purpose                                                            |
 | ------------------- | ---------------- | ------------------------------------------------------------------ |
@@ -155,3 +154,42 @@ Unlike the perf path, the cogs replayer does NOT shell out to
 mixes, and Poisson arrivals, and its latency/CPU source of truth is
 server-side `system.query_log`, so the client-timing-skew argument for
 delegating does not apply.
+
+### Methodology
+
+- **Merge lag.** Merges run after inserts. The drain phase (default 15m)
+  catches merges triggered by measure-window inserts and books them to
+  ingest. Soak-triggered merges completing during measure are counted too —
+  at steady state the two leakages net out. That is what the soak phase is
+  for (gate: active part count stable ±10% over 5 polls). `parts_plateau:
+  false` in the result means steady state was not reached; treat $/1M-events
+  with suspicion.
+- **Multi-replica accounting.** `system.query_log` / `system.part_log` are
+  per-replica and Cloud load-balances connections. All collectors read
+  `clusterAllReplicas(default, ...)` and flush logs cluster-wide. Available
+  CPU = reachable replicas × per-replica vCPUs (cgroup limit, falling back
+  to `max_threads`).
+- **Live event time.** The ingest driver stamps wall-clock event times
+  (payloads stay deterministic per seed). The replayer binds a sliding
+  `[now-3d, now)` window per arrival, so scan size stays stationary.
+- **Cache state.** A configurable fraction of replayed queries runs with
+  `enable_filesystem_cache=0` and is costed separately (`warm`/`cold`).
+- **Per-query settings** (`max_threads`, ...) come from the cell manifest and
+  are recorded in the result. Don't compare runs with different settings.
+- **Idle cell semantics.** The `idle` cell measures the awake-but-unloaded
+  floor, not Cloud idling behavior — the harness's own polling keeps the
+  service awake.
+- **Dedicated service required.** Foreign databases mean foreign merges and
+  queries polluting coverage; the runner warns (`foreign_databases` flag).
+- **Do not extrapolate across tiers/shapes.** A different tier has different
+  rates AND different cache/memory behavior. The runner flags
+  `shape_mismatch` when the detected shape differs from the profile.
+- **Reconciliation deltas** >20% flag the run. Expected causes: autoscaling
+  movement, a shared service, background system work, idling between phases
+  — and daily-granular usage statements, which make sub-day windows
+  indicative only.
+- **Two prices, always.** `billed_shape` reconciles with the invoice (window
+  cost split by CPU shares; the remainder is the idle floor). `cpu_linear`
+  is the marginal cost on an already-busy service.
+- **Egress estimate** is derived from uncompressed `result_bytes`; Cloud
+  bills compressed transfer, so it is an upper bound.
